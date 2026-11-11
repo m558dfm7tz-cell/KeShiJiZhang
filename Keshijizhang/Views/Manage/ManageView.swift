@@ -202,7 +202,10 @@ struct ManageView: View {
 
     private func groupLine(_ group: SmallGroup) -> String {
         let schedule = group.scheduleSummary
-        let count = "\(group.students.count) 人"
+        let named = group.students.filter {
+            !$0.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+        let count = named.isEmpty ? "标准 \(group.standardCount) 人" : "\(named.count) 人"
         if schedule.isEmpty { return count }
         return "\(schedule) · \(count)"
     }

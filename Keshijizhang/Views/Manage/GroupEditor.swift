@@ -100,7 +100,7 @@ struct GroupEditorView: View {
 
                     SectionLabel(text: "价格")
                     FormCard {
-                        moneyRow(title: "基础价格", text: $baseText, placeholder: "0")
+                        moneyRow(title: "基础价格（1 人）", text: $baseText, placeholder: "0")
                         FormDivider()
                         HStack {
                             Text("标准人数")
@@ -134,7 +134,7 @@ struct GroupEditorView: View {
                         FormDivider()
                         moneyRow(title: "每人增减", text: $deltaText, placeholder: "不填")
                     }
-                    Text("少一人减 \(CN.money(hintDelta))，多一人加 \(CN.money(hintDelta))；不填就用 基础÷人数")
+                    Text("每多一人加 \(CN.money(hintDelta))")
                         .font(.system(size: 12))
                         .foregroundStyle(Theme.secondary)
                         .padding(.horizontal, 4)
@@ -273,10 +273,7 @@ struct GroupEditorView: View {
     }
 
     private var previewDelta: Double {
-        if let typed = CN.parseMoney(deltaText), typed != 0 { return typed }
-        let base = CN.parseMoney(baseText) ?? 0
-        guard group.standardCount > 0 else { return 0 }
-        return base / Double(group.standardCount)
+        CN.parseMoney(deltaText) ?? 0
     }
 
     private func moneyRow(title: String, text: Binding<String>, placeholder: String) -> some View {

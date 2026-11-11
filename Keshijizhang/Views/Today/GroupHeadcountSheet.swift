@@ -66,7 +66,7 @@ struct GroupHeadcountSheet: View {
                         Button {
                             confirm(group.standardCount)
                         } label: {
-                            Text("标准人数全到")
+                            Text("标准 \(group.standardCount) 人")
                                 .font(.system(size: 17, weight: .semibold))
                                 .foregroundStyle(group.standardCount > 0 ? Theme.blue : Theme.secondary)
                                 .frame(maxWidth: .infinity)
@@ -115,22 +115,12 @@ struct GroupHeadcountSheet: View {
     }
 
     private var intro: String {
-        if group.standardCount > 0 {
-            return "点人数。标准 \(group.standardCount) 人，基础 \(CN.money(group.basePrice))。"
-        }
-        return "点人数。还没设标准人数时，按基础价格记这一节。"
+        "基础价格按 1 人算。标准人数只是这里的默认选中，不改变单价。"
     }
 
     private var summaryLine: String {
-        let standard = group.standardCount
-        guard standard > 0 else { return "\(count) 人" }
-        let diff = count - standard
-        if diff == 0 { return "\(count) 人 · 标准人数" }
-        let delta = abs(Double(diff) * group.effectivePerPersonDelta)
-        if diff > 0 {
-            return "\(count) 人 · 多 \(diff) 人（+\(CN.money(delta))）"
-        }
-        return "\(count) 人 · 少 \(-diff) 人（−\(CN.money(delta))）"
+        let extra = max(count - 1, 0)
+        return "\(count) 人 · 基础 \(CN.money(group.basePrice)) + (\(extra))×\(CN.money(group.perPersonDelta))"
     }
 
     private func countButton(_ number: Int) -> some View {

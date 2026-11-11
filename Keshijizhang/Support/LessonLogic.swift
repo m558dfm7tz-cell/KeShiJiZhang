@@ -291,7 +291,7 @@ enum LessonFactory {
         context: ModelContext,
         persists: Bool = true
     ) -> Lesson {
-        let people = max(count, 0)
+        let people = max(count, 1)
         let lesson = Lesson()
         lesson.date = CN.startOfDay(day)
         lesson.timeMinutes = slot.startMinutes

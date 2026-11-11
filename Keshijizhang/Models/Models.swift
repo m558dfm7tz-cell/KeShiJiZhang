@@ -319,23 +319,18 @@ extension SmallGroup {
         }.joined(separator: "、")
     }
 
-    /// 每人增减。填了就用填写值；没填时用基础价格 ÷ 标准人数。
-    var effectivePerPersonDelta: Double {
-        if perPersonDelta != 0 { return perPersonDelta }
-        guard standardCount > 0 else { return 0 }
-        return basePrice / Double(standardCount)
-    }
-
     var usesConfiguredClassPrice: Bool {
-        basePrice != 0 || perPersonDelta != 0 || standardCount > 0
+        basePrice != 0 || perPersonDelta != 0
     }
 
     var usesNameRoll: Bool {
         rollByName && !activeStudents.isEmpty
     }
 
+    /// 基础价格是 1 个人的价格。标准人数不参与计算。
     func classCharge(for count: Int) -> Double {
-        let raw = basePrice + Double(count - standardCount) * effectivePerPersonDelta
+        let people = max(count, 1)
+        let raw = basePrice + Double(people - 1) * perPersonDelta
         return max(0, round2(raw))
     }
 
