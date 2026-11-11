@@ -186,16 +186,18 @@ struct Engagement {
 extension Student {
     func effectivePrice(on date: Date) -> Double {
         let day = CN.startOfDay(date)
-        let prior = prices.filter { $0.effectiveFrom <= day }
-        guard let best = prior.max(by: { lhs, rhs in
-            if lhs.effectiveFrom != rhs.effectiveFrom {
-                return lhs.effectiveFrom < rhs.effectiveFrom
+        var best: PriceRecord?
+        for price in prices where price.effectiveFrom <= day {
+            guard let current = best else {
+                best = price
+                continue
             }
-            return lhs.createdAt < rhs.createdAt
-        }) else {
-            return 0
+            if price.effectiveFrom > current.effectiveFrom
+                || (price.effectiveFrom == current.effectiveFrom && price.createdAt > current.createdAt) {
+                best = price
+            }
         }
-        return best.unitPrice
+        return best?.unitPrice ?? 0
     }
 
     var currentPrice: Double { effectivePrice(on: Date()) }
@@ -227,9 +229,10 @@ extension Student {
     }
 
     func engagements(on date: Date) -> [Engagement] {
-        let day = CN.startOfDay(date)
+        let indexed = LessonDay.index(lessons, on: date)
         var items: [Engagement] = []
-        for lesson in lessons where CN.isSameDay(lesson.date, day) {
+        items.reserveCapacity(indexed.lessons.count + slots.count)
+        for lesson in indexed.lessons {
             items.append(
                 Engagement(
                     timeMinutes: lesson.hasTime ? lesson.timeMinutes : nil,
@@ -239,29 +242,34 @@ extension Student {
         }
         guard !paused else { return items }
         let weekday = CN.mondayBasedWeekday(date)
-        for slot in slots where slot.weekday == weekday {
-            let materialized = lessons.contains {
-                CN.isSameDay($0.date, day)
-                    && $0.originKind == OriginKind.studentSlot
-                    && $0.originSlotKey == slot.uuid.uuidString
-            }
-            if !materialized {
-                items.append(Engagement(timeMinutes: slot.startMinutes, title: "固定课"))
-            }
+        for slot in slots where slot.weekday == weekday && !indexed.studentSlotKeys.contains(slot.uuid.uuidString) {
+            items.append(Engagement(timeMinutes: slot.startMinutes, title: "固定课"))
         }
         if let group = smallGroup {
-            for slot in group.slots where slot.weekday == weekday {
-                let materialized = lessons.contains {
-                    CN.isSameDay($0.date, day)
-                        && $0.originKind == OriginKind.groupSlot
-                        && $0.originSlotKey == slot.uuid.uuidString
-                }
-                if !materialized {
-                    items.append(Engagement(timeMinutes: slot.startMinutes, title: group.name))
-                }
+            for slot in group.slots where slot.weekday == weekday && !indexed.groupSlotKeys.contains(slot.uuid.uuidString) {
+                items.append(Engagement(timeMinutes: slot.startMinutes, title: group.name))
             }
         }
         return items
+    }
+
+    func engagementCount(
+        lessonCount: Int,
+        studentSlotKeys: Set<String>,
+        groupSlotKeys: Set<String>,
+        weekday: Int
+    ) -> Int {
+        var count = lessonCount
+        guard !paused else { return count }
+        for slot in slots where slot.weekday == weekday && !studentSlotKeys.contains(slot.uuid.uuidString) {
+            count += 1
+        }
+        if let group = smallGroup {
+            for slot in group.slots where slot.weekday == weekday && !groupSlotKeys.contains(slot.uuid.uuidString) {
+                count += 1
+            }
+        }
+        return count
     }
 }
 

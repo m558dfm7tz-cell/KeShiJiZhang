@@ -1,7 +1,10 @@
+import SwiftData
 import SwiftUI
 import UIKit
 
 struct RootTabView: View {
+    @Environment(\.modelContext) private var context
+    @Environment(\.scenePhase) private var scenePhase
     @State private var tab = 0
 
     init() {
@@ -43,6 +46,11 @@ struct RootTabView: View {
             }
             .tabItem { Label("月统计", systemImage: tab == 3 ? "chart.bar.fill" : "chart.bar") }
             .tag(3)
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase != .active {
+                context.saveNow()
+            }
         }
     }
 }

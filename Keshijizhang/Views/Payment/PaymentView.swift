@@ -41,7 +41,7 @@ struct PaymentView: View {
     @State private var selection: Set<UUID> = []
     @State private var showBatch = false
 
-    private var chips: [PayChip] {
+    private func makeChips() -> [PayChip] {
         var items = [PayChip(id: "all", kind: .all, title: "全部")]
         for org in orgs.sorted(by: { $0.name.localizedStandardCompare($1.name) == .orderedAscending }) {
             items.append(PayChip(id: "org-\(org.uuid.uuidString)", kind: .org(org.uuid), title: org.name))
@@ -55,11 +55,11 @@ struct PaymentView: View {
         return items
     }
 
-    private var monthLessons: [Lesson] {
+    private func lessons(in month: Date, matching chip: PayChip) -> [Lesson] {
         var seen = Set<UUID>()
         var list: [Lesson] = []
         for student in students {
-            guard matches(student) else { continue }
+            guard matches(student, chip: chip) else { continue }
             for lesson in student.lessons where lesson.countsTowardBill && CN.isSameMonth(lesson.date, month) {
                 if seen.insert(lesson.uuid).inserted {
                     list.append(lesson)
@@ -72,24 +72,21 @@ struct PaymentView: View {
         }
     }
 
-    private var visibleLessons: [Lesson] {
+    private func filtered(_ lessons: [Lesson]) -> [Lesson] {
         switch segment {
-        case .unpaid: return monthLessons.filter { !$0.paid }
-        case .paid: return monthLessons.filter(\.paid)
-        case .all: return monthLessons
+        case .unpaid: return lessons.filter { !$0.paid }
+        case .paid: return lessons.filter(\.paid)
+        case .all: return lessons
         }
     }
 
-    private var unpaidTotal: Double {
-        Billing.unpaid(monthLessons)
-    }
-
-    private var selectedLessons: [Lesson] {
-        monthLessons.filter { selection.contains($0.uuid) && !$0.paid }
-    }
-
     var body: some View {
-        ZStack {
+        let chips = makeChips()
+        let monthLessons = lessons(in: month, matching: chip)
+        let visibleLessons = filtered(monthLessons)
+        let unpaidTotal = Billing.unpaid(monthLessons)
+        let selectedLessons = monthLessons.filter { selection.contains($0.uuid) && !$0.paid }
+        return ZStack {
             ScreenBackground()
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
@@ -170,8 +167,11 @@ struct PaymentView: View {
                         .font(.system(size: 15, weight: .semibold))
                     Spacer()
                     Button {
-                        LessonFactory.markPaid(selectedLessons, paid: true, context: context)
-                        selection.removeAll()
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            LessonFactory.markPaid(selectedLessons, paid: true, context: context, persists: false)
+                            selection.removeAll()
+                        }
+                        context.saveSoon()
                     } label: {
                         Text("确认收款")
                             .font(.system(size: 16, weight: .semibold))
@@ -200,7 +200,7 @@ struct PaymentView: View {
         }
     }
 
-    private func matches(_ student: Student) -> Bool {
+    private func matches(_ student: Student, chip: PayChip) -> Bool {
         switch chip.kind {
         case .all:
             return true
@@ -227,8 +227,10 @@ struct PaymentView: View {
                     toggle(lesson)
                 } label: {
                     CheckCircle(checked: lesson.paid || chosen)
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.borderless)
                 VStack(alignment: .leading, spacing: 3) {
                     Text("\(CN.listDay(lesson.date)) · \(lesson.student?.name ?? "")")
                         .font(.system(size: 16, weight: .semibold))
@@ -262,7 +264,7 @@ struct PaymentView: View {
         if lesson.paid {
             lesson.paid = false
             selection.remove(lesson.uuid)
-            try? context.save()
+            context.saveSoon()
         } else if selection.contains(lesson.uuid) {
             selection.remove(lesson.uuid)
         } else {

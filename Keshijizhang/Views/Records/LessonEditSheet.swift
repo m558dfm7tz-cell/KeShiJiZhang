@@ -112,7 +112,7 @@ struct LessonEditSheet: View {
             .alert("删除这条记录？", isPresented: $confirmDelete) {
                 Button("删除", role: .destructive) {
                     context.delete(lesson)
-                    try? context.save()
+                    context.saveSoon()
                     dismiss()
                 }
                 Button("取消", role: .cancel) {}
@@ -154,8 +154,10 @@ struct LessonEditSheet: View {
                 .padding(.horizontal, 12)
                 .padding(.vertical, 6)
                 .background(on ? Theme.blue : Color(red: 0.93, green: 0.93, blue: 0.95), in: Capsule())
+                .frame(minHeight: 44)
+                .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.borderless)
     }
 
     private func payChip(_ title: String, on: Bool, color: Color, action: @escaping () -> Void) -> some View {
@@ -166,8 +168,10 @@ struct LessonEditSheet: View {
                 .padding(.horizontal, 12)
                 .padding(.vertical, 6)
                 .background(on ? color.opacity(0.14) : Color(red: 0.93, green: 0.93, blue: 0.95), in: Capsule())
+                .frame(minHeight: 44)
+                .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.borderless)
     }
 
     private var dateSheet: some View {
@@ -267,7 +271,7 @@ struct LessonEditSheet: View {
         } else {
             lesson.paid = paid
         }
-        try? context.save()
+        context.saveSoon()
         dismiss()
     }
 

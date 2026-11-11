@@ -9,11 +9,10 @@ struct StudentMonthDetailView: View {
     @State private var amountLessonID: UUID?
     @State private var amountText = ""
 
-    private var monthLessons: [Lesson] {
+    private func lessons(in month: Date) -> [Lesson] {
         var seen = Set<UUID>()
-        let raw = student.lessons.filter { CN.isSameMonth($0.date, month) }
         var list: [Lesson] = []
-        for lesson in raw where seen.insert(lesson.uuid).inserted {
+        for lesson in student.lessons where CN.isSameMonth(lesson.date, month) && seen.insert(lesson.uuid).inserted {
             list.append(lesson)
         }
         return list.sorted { lhs, rhs in
@@ -22,11 +21,11 @@ struct StudentMonthDetailView: View {
         }
     }
 
-    private var billed: [Lesson] { monthLessons.filter(\.countsTowardBill) }
-    private var unpaidLessons: [Lesson] { billed.filter { !$0.paid } }
-
     var body: some View {
-        ZStack {
+        let monthLessons = lessons(in: month)
+        let billed = monthLessons.filter(\.countsTowardBill)
+        let unpaidLessons = billed.filter { !$0.paid }
+        return ZStack {
             ScreenBackground()
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
@@ -56,7 +55,8 @@ struct StudentMonthDetailView: View {
                         }
                     }
                     Button {
-                        LessonFactory.markPaid(unpaidLessons, paid: true, context: context)
+                        LessonFactory.markPaid(unpaidLessons, paid: true, context: context, persists: false)
+                        context.saveSoon()
                     } label: {
                         Text("本月未收全部标为已收")
                             .font(.system(size: 16, weight: .semibold))
@@ -157,36 +157,59 @@ struct StudentMonthDetailView: View {
                     Text(CN.money(lesson.amount))
                         .font(.system(size: 16, weight: .semibold))
                     Button {
-                        LessonFactory.togglePaid(lesson, context: context)
+                        LessonFactory.togglePaid(lesson, context: context, persists: false)
+                        context.saveSoon()
                     } label: {
                         Pill(text: lesson.paid ? "已收" : "未收", color: lesson.paid ? Theme.green : Theme.red)
+                            .frame(minWidth: 44, minHeight: 44)
+                            .contentShape(Rectangle())
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.borderless)
                 }
+                lessonMenu(lesson)
             }
         }
-        .contextMenu {
+    }
+
+    private func lessonMenu(_ lesson: Lesson) -> some View {
+        Menu {
             if lesson.countsTowardBill {
                 Button(lesson.paid ? "标为未收" : "标为已收") {
-                    LessonFactory.togglePaid(lesson, context: context)
+                    LessonFactory.togglePaid(lesson, context: context, persists: false)
+                    context.saveSoon()
                 }
                 Button("修改金额") {
                     amountText = amountString(lesson.amount)
                     amountLessonID = lesson.uuid
                 }
-                Button("改为请假") { LessonFactory.setLeave(lesson, context: context) }
+                Button("改为请假") {
+                    LessonFactory.setLeave(lesson, context: context, persists: false)
+                    context.saveSoon()
+                }
             } else if lesson.status == .leave {
-                Button("取消请假，记为已上") { LessonFactory.restoreCompleted(lesson, context: context) }
+                Button("取消请假，记为已上") {
+                    LessonFactory.restoreCompleted(lesson, context: context, persists: false)
+                    context.saveSoon()
+                }
             } else if lesson.status == .pending {
                 Button("记为已上完") {
                     lesson.status = .completed
-                    try? context.save()
+                    context.saveSoon()
                 }
             }
             Button("删除这节课", role: .destructive) {
-                LessonFactory.delete(lesson, context: context)
+                LessonFactory.delete(lesson, context: context, persists: false)
+                context.saveSoon()
             }
+        } label: {
+            Image(systemName: "ellipsis")
+                .font(.system(size: 16, weight: .bold))
+                .foregroundStyle(Theme.secondary)
+                .frame(width: 44, height: 44)
+                .contentShape(Rectangle())
         }
+        .buttonStyle(.borderless)
+        .accessibilityLabel("更多")
     }
 
     private func amountString(_ value: Double) -> String {
@@ -196,9 +219,10 @@ struct StudentMonthDetailView: View {
 
     private func saveAmount() {
         guard let id = amountLessonID,
-              let lesson = monthLessons.first(where: { $0.uuid == id }),
+              let lesson = lessons(in: month).first(where: { $0.uuid == id }),
               let amount = CN.parseMoney(amountText) else { return }
-        LessonFactory.updateAmount(lesson, amount: amount, context: context)
+        LessonFactory.updateAmount(lesson, amount: amount, context: context, persists: false)
+        context.saveSoon()
         amountLessonID = nil
     }
 }

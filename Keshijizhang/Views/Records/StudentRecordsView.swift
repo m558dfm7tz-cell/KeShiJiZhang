@@ -9,7 +9,7 @@ struct StudentRecordsView: View {
     @State private var month = CN.startOfMonth(Date())
     @State private var editingID: UUID?
 
-    private var monthLessons: [Lesson] {
+    private func lessons(in month: Date) -> [Lesson] {
         var seen = Set<UUID>()
         return student.lessons
             .filter { CN.isSameMonth($0.date, month) }
@@ -20,11 +20,16 @@ struct StudentRecordsView: View {
             }
     }
 
-    private var taught: [Lesson] { monthLessons.filter { $0.status == .completed } }
-    private var leaves: [Lesson] { monthLessons.filter { $0.status == .leave } }
-
     var body: some View {
-        ZStack {
+        let monthLessons = lessons(in: month)
+        let taughtCount = monthLessons.reduce(into: 0) { count, lesson in
+            if lesson.status == .completed { count += 1 }
+        }
+        let leaveCount = monthLessons.reduce(into: 0) { count, lesson in
+            if lesson.status == .leave { count += 1 }
+        }
+        let taughtAmount = Money.sum(monthLessons.compactMap { $0.status == .completed ? $0.amount : nil })
+        return ZStack {
             ScreenBackground()
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
@@ -34,7 +39,7 @@ struct StudentRecordsView: View {
 
                     monthSwitcher
 
-                    Text("\(CN.monthShort(month)) 已上 \(taught.count) 节 · 请假 \(leaves.count) 次 · \(CN.money(Billing.receivable(taught)))")
+                    Text("\(CN.monthShort(month)) 已上 \(taughtCount) 节 · 请假 \(leaveCount) 次 · \(CN.money(taughtAmount))")
                         .font(.system(size: 14))
                         .foregroundStyle(Theme.secondary)
                         .padding(.horizontal, 4)
@@ -49,8 +54,9 @@ struct StudentRecordsView: View {
                                 editingID = lesson.uuid
                             } label: {
                                 LessonRecordRow(lesson: lesson)
+                                    .contentShape(Rectangle())
                             }
-                            .buttonStyle(.plain)
+                            .buttonStyle(.borderless)
                         }
                     }
 
@@ -77,7 +83,7 @@ struct StudentRecordsView: View {
             }
         }
         .sheet(isPresented: editingPresented) {
-            if let lesson = monthLessons.first(where: { $0.uuid == editingID }) ?? student.lessons.first(where: { $0.uuid == editingID }) {
+            if let lesson = lessons(in: month).first(where: { $0.uuid == editingID }) ?? student.lessons.first(where: { $0.uuid == editingID }) {
                 LessonEditSheet(lesson: lesson)
             }
         }
@@ -114,7 +120,8 @@ struct StudentRecordsView: View {
                         .fill(selected ? Theme.card : Color.clear)
                 )
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.borderless)
+        .contentShape(Rectangle())
     }
 }
 

@@ -45,65 +45,111 @@ enum TodayEntry: Identifiable {
     }
 }
 
+enum LessonDay {
+    struct Index {
+        var lessons: [Lesson] = []
+        var studentSlotKeys: Set<String> = []
+        var groupSlotKeys: Set<String> = []
+    }
+
+    static func index(_ lessons: [Lesson], on date: Date) -> Index {
+        let day = CN.startOfDay(date)
+        var indexed = Index()
+        indexed.lessons.reserveCapacity(4)
+        for lesson in lessons where CN.isSameDay(lesson.date, day) {
+            indexed.lessons.append(lesson)
+            if lesson.originKind == OriginKind.studentSlot {
+                indexed.studentSlotKeys.insert(lesson.originSlotKey)
+            } else if lesson.originKind == OriginKind.groupSlot {
+                indexed.groupSlotKeys.insert(lesson.originSlotKey)
+            }
+        }
+        return indexed
+    }
+}
+
+struct AgendaBoard {
+    var entries: [TodayEntry]
+    var doneLessons: [Lesson]
+    var leaveLessons: [Lesson]
+    var engagementCounts: [UUID: Int]
+}
+
 enum Agenda {
-    static func entries(students: [Student], groups: [SmallGroup], on date: Date) -> [TodayEntry] {
+    static func board(students: [Student], groups: [SmallGroup], on date: Date) -> AgendaBoard {
         let day = CN.startOfDay(date)
         let weekday = CN.mondayBasedWeekday(day)
-        var result: [TodayEntry] = []
-
+        var entries: [TodayEntry] = []
         var grouped: [String: [Lesson]] = [:]
+        var groupKeysByStudent: [UUID: Set<String>] = [:]
+        var seenLessons = Set<UUID>()
+        var done: [Lesson] = []
+        var leave: [Lesson] = []
+        var counts: [UUID: Int] = [:]
+        counts.reserveCapacity(students.count)
+
         for student in students {
-            for lesson in student.lessons where CN.isSameDay(lesson.date, day) {
+            let indexed = LessonDay.index(student.lessons, on: day)
+            groupKeysByStudent[student.uuid] = indexed.groupSlotKeys
+            counts[student.uuid] = student.engagementCount(
+                lessonCount: indexed.lessons.count,
+                studentSlotKeys: indexed.studentSlotKeys,
+                groupSlotKeys: indexed.groupSlotKeys,
+                weekday: weekday
+            )
+            for lesson in indexed.lessons where seenLessons.insert(lesson.uuid).inserted {
+                if lesson.status == .completed {
+                    done.append(lesson)
+                } else if lesson.status == .leave {
+                    leave.append(lesson)
+                }
                 if lesson.originKind == OriginKind.groupSlot,
                    !lesson.originSlotKey.isEmpty,
                    lesson.status != .pending {
                     grouped[lesson.originSlotKey, default: []].append(lesson)
                 } else {
-                    result.append(.single(lesson))
+                    entries.append(.single(lesson))
+                }
+            }
+            if !student.paused {
+                for slot in student.slots where slot.weekday == weekday && !indexed.studentSlotKeys.contains(slot.uuid.uuidString) {
+                    entries.append(.studentSlot(slot, student))
                 }
             }
         }
+
+        done.sort { $0.timeMinutes < $1.timeMinutes }
+        leave.sort { $0.timeMinutes < $1.timeMinutes }
+
         for (key, lessons) in grouped {
             let name = lessons.first?.groupName ?? "小班"
             let time = lessons.compactMap { $0.hasTime ? $0.timeMinutes : nil }.min() ?? -1
-            result.append(.groupSession(slotKey: key, lessons: lessons, groupName: name, timeMinutes: time))
-        }
-
-        for student in students where !student.paused {
-            for slot in student.slots where slot.weekday == weekday {
-                let exists = student.lessons.contains {
-                    CN.isSameDay($0.date, day)
-                        && $0.originKind == OriginKind.studentSlot
-                        && $0.originSlotKey == slot.uuid.uuidString
-                }
-                if !exists {
-                    result.append(.studentSlot(slot, student))
-                }
-            }
+            entries.append(.groupSession(slotKey: key, lessons: lessons, groupName: name, timeMinutes: time))
         }
 
         for group in groups {
-            let active = group.activeStudents
-            guard !active.isEmpty else { continue }
+            guard !group.activeStudents.isEmpty else { continue }
             for slot in group.slots where slot.weekday == weekday {
                 let key = slot.uuid.uuidString
                 let exists = grouped[key] != nil || group.students.contains { student in
-                    student.lessons.contains {
-                        CN.isSameDay($0.date, day)
-                            && $0.originKind == OriginKind.groupSlot
-                            && $0.originSlotKey == key
-                    }
+                    groupKeysByStudent[student.uuid]?.contains(key) == true
                 }
                 if !exists {
-                    result.append(.groupSlot(slot, group))
+                    entries.append(.groupSlot(slot, group))
                 }
             }
         }
 
-        return result.sorted {
+        entries.sort {
             if $0.sortMinutes != $1.sortMinutes { return $0.sortMinutes < $1.sortMinutes }
             return $0.id < $1.id
         }
+        return AgendaBoard(
+            entries: entries,
+            doneLessons: done,
+            leaveLessons: leave,
+            engagementCounts: counts
+        )
     }
 }
 
@@ -172,7 +218,13 @@ enum LessonFactory {
     }
 
     @discardableResult
-    static func completeStudentSlot(_ slot: WeeklySlot, student: Student, on day: Date, context: ModelContext) -> Lesson {
+    static func completeStudentSlot(
+        _ slot: WeeklySlot,
+        student: Student,
+        on day: Date,
+        context: ModelContext,
+        persists: Bool = true
+    ) -> Lesson {
         let amount = student.effectivePrice(on: day)
         let lesson = make(
             context: context,
@@ -186,12 +238,18 @@ enum LessonFactory {
             originKind: OriginKind.studentSlot,
             originSlotKey: slot.uuid.uuidString
         )
-        try? context.save()
+        if persists { try? context.save() }
         return lesson
     }
 
     @discardableResult
-    static func leaveStudentSlot(_ slot: WeeklySlot, student: Student, on day: Date, context: ModelContext) -> Lesson {
+    static func leaveStudentSlot(
+        _ slot: WeeklySlot,
+        student: Student,
+        on day: Date,
+        context: ModelContext,
+        persists: Bool = true
+    ) -> Lesson {
         let lesson = make(
             context: context,
             student: student,
@@ -204,7 +262,7 @@ enum LessonFactory {
             originKind: OriginKind.studentSlot,
             originSlotKey: slot.uuid.uuidString
         )
-        try? context.save()
+        if persists { try? context.save() }
         return lesson
     }
 
@@ -218,39 +276,39 @@ enum LessonFactory {
         try? context.save()
     }
 
-    static func setLeave(_ lesson: Lesson, context: ModelContext) {
+    static func setLeave(_ lesson: Lesson, context: ModelContext, persists: Bool = true) {
         lesson.status = .leave
         lesson.paid = false
-        try? context.save()
+        if persists { try? context.save() }
     }
 
-    static func restoreCompleted(_ lesson: Lesson, context: ModelContext) {
+    static func restoreCompleted(_ lesson: Lesson, context: ModelContext, persists: Bool = true) {
         lesson.status = .completed
-        try? context.save()
+        if persists { try? context.save() }
     }
 
-    static func togglePaid(_ lesson: Lesson, context: ModelContext) {
+    static func togglePaid(_ lesson: Lesson, context: ModelContext, persists: Bool = true) {
         guard lesson.countsTowardBill else { return }
         lesson.paid.toggle()
-        try? context.save()
+        if persists { try? context.save() }
     }
 
-    static func markPaid(_ lessons: [Lesson], paid: Bool, context: ModelContext) {
+    static func markPaid(_ lessons: [Lesson], paid: Bool, context: ModelContext, persists: Bool = true) {
         for lesson in lessons where lesson.countsTowardBill {
             lesson.paid = paid
         }
-        try? context.save()
+        if persists { try? context.save() }
     }
 
-    static func updateAmount(_ lesson: Lesson, amount: Double, context: ModelContext) {
+    static func updateAmount(_ lesson: Lesson, amount: Double, context: ModelContext, persists: Bool = true) {
         lesson.amount = round2(amount)
         lesson.priceOverridden = true
-        try? context.save()
+        if persists { try? context.save() }
     }
 
-    static func delete(_ lesson: Lesson, context: ModelContext) {
+    static func delete(_ lesson: Lesson, context: ModelContext, persists: Bool = true) {
         context.delete(lesson)
-        try? context.save()
+        if persists { try? context.save() }
     }
 
     @discardableResult
@@ -260,19 +318,21 @@ enum LessonFactory {
         slot: WeeklySlot,
         day: Date,
         attending: Set<UUID>,
-        paid: Set<UUID>
-    ) -> [Lesson] {
+        paid: Set<UUID>,
+        persists: Bool = true
+    ) -> GroupRollApply {
         var created: [Lesson] = []
+        var previous: [(lesson: Lesson, statusRaw: String, paid: Bool)] = []
         let members = group.activeStudents
         let key = slot.uuid.uuidString
         for student in members {
-            let existing = student.lessons.first {
-                CN.isSameDay($0.date, day)
-                    && $0.originKind == OriginKind.groupSlot
-                    && $0.originSlotKey == key
+            let indexed = LessonDay.index(student.lessons, on: day)
+            let existing = indexed.lessons.first {
+                $0.originKind == OriginKind.groupSlot && $0.originSlotKey == key
             }
             let isAttending = attending.contains(student.uuid)
             if let existing {
+                previous.append((lesson: existing, statusRaw: existing.statusRaw, paid: existing.paid))
                 existing.groupName = group.name
                 existing.timeMinutes = slot.startMinutes
                 existing.kind = .fixed
@@ -319,8 +379,8 @@ enum LessonFactory {
                 created.append(lesson)
             }
         }
-        try? context.save()
-        return created
+        if persists { try? context.save() }
+        return GroupRollApply(created: created, previous: previous)
     }
 
     static func undoGroup(slotKey: String, lessons: [Lesson], context: ModelContext) {
@@ -331,9 +391,47 @@ enum LessonFactory {
     }
 }
 
+struct GroupRollApply {
+    var created: [Lesson]
+    var previous: [(lesson: Lesson, statusRaw: String, paid: Bool)]
+}
+
 struct LessonTickUndo: Identifiable {
     var id = UUID()
     var message: String
     var created: [Lesson]
     var previous: [(lesson: Lesson, statusRaw: String, paid: Bool)]
+    var entryIDs: [String] = []
+}
+
+@MainActor
+enum Persistence {
+    private static var tokens: [ObjectIdentifier: Int] = [:]
+
+    static func saveSoon(_ context: ModelContext, after nanoseconds: UInt64 = 80_000_000) {
+        let key = ObjectIdentifier(context)
+        tokens[key, default: 0] += 1
+        let token = tokens[key] ?? 0
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: nanoseconds)
+            guard tokens[key] == token else { return }
+            try? context.save()
+        }
+    }
+
+    static func saveNow(_ context: ModelContext) {
+        let key = ObjectIdentifier(context)
+        tokens[key, default: 0] += 1
+        try? context.save()
+    }
+}
+
+extension ModelContext {
+    func saveSoon(after nanoseconds: UInt64 = 80_000_000) {
+        Persistence.saveSoon(self, after: nanoseconds)
+    }
+
+    func saveNow() {
+        Persistence.saveNow(self)
+    }
 }

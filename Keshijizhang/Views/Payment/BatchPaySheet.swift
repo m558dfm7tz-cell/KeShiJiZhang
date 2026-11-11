@@ -56,7 +56,7 @@ struct BatchPaySheet: View {
         }
     }
 
-    private var inRange: [Lesson] {
+    private func rangedLessons() -> [Lesson] {
         let start = CN.startOfDay(min(rangeStart, rangeEnd))
         let end = CN.startOfDay(max(rangeStart, rangeEnd))
         var seen = Set<UUID>()
@@ -73,12 +73,14 @@ struct BatchPaySheet: View {
         return list
     }
 
-    private var taught: [Lesson] { inRange.filter(\.countsTowardBill) }
-    private var pendingCount: Int { inRange.filter { $0.status == .pending }.count }
-    private var unpaidLessons: [Lesson] { taught.filter { !$0.paid } }
-
     var body: some View {
-        NavigationStack {
+        let ranged = rangedLessons()
+        let taught = ranged.filter(\.countsTowardBill)
+        let pendingCount = ranged.reduce(into: 0) { count, lesson in
+            if lesson.status == .pending { count += 1 }
+        }
+        let unpaidLessons = taught.filter { !$0.paid }
+        return NavigationStack {
             ZStack {
                 ScreenBackground()
                 ScrollView {
@@ -300,7 +302,9 @@ struct BatchPaySheet: View {
     }
 
     private func markAll() {
-        LessonFactory.markPaid(unpaidLessons, paid: true, context: context)
+        let unpaid = rangedLessons().filter { $0.countsTowardBill && !$0.paid }
+        LessonFactory.markPaid(unpaid, paid: true, context: context, persists: false)
+        context.saveSoon()
         dismiss()
     }
 }

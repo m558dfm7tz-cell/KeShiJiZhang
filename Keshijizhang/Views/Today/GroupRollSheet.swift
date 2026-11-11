@@ -15,15 +15,14 @@ struct GroupRollSheet: View {
     @State private var paid: Set<UUID> = []
     @State private var ready = false
 
-    private var members: [Student] { group.activeStudents }
     private var isReview: Bool { !existing.isEmpty }
 
-    private var total: Double {
-        Money.sum(members.filter { attending.contains($0.uuid) }.map { amount(for: $0) })
-    }
-
     var body: some View {
-        NavigationStack {
+        let members = group.activeStudents
+        let amounts = amountsByStudent(members)
+        let total = Money.sum(members.compactMap { attending.contains($0.uuid) ? amounts[$0.uuid] : nil })
+        let title = buttonTitle(count: attending.count, total: total)
+        return NavigationStack {
             ZStack {
                 ScreenBackground()
                 ScrollView {
@@ -45,7 +44,7 @@ struct GroupRollSheet: View {
                             FormCard {
                                 ForEach(Array(members.enumerated()), id: \.element.uuid) { index, student in
                                     if index > 0 { FormDivider() }
-                                    memberRow(student)
+                                    memberRow(student, amount: amounts[student.uuid] ?? 0)
                                 }
                             }
                         }
@@ -54,7 +53,7 @@ struct GroupRollSheet: View {
                 }
                 .safeAreaInset(edge: .bottom) {
                     VStack {
-                        FillButton(title: buttonTitle, color: Theme.blue, disabled: members.isEmpty, action: save)
+                        FillButton(title: title, color: Theme.blue, disabled: members.isEmpty, action: save)
                     }
                     .padding(.horizontal, 16)
                     .padding(.vertical, 8)
@@ -73,22 +72,31 @@ struct GroupRollSheet: View {
         .presentationDragIndicator(.visible)
     }
 
-    private var buttonTitle: String {
-        let count = attending.count
+    private func buttonTitle(count: Int, total: Double) -> String {
         if count == 0 { return "全部记为请假" }
         let verb = isReview ? "保存" : "确认上完"
         return "\(verb) · \(count) 人 · \(CN.money(total))"
     }
 
-    private func memberRow(_ student: Student) -> some View {
+    private func amountsByStudent(_ members: [Student]) -> [UUID: Double] {
+        var amounts: [UUID: Double] = [:]
+        amounts.reserveCapacity(members.count)
+        for student in members {
+            amounts[student.uuid] = amount(for: student)
+        }
+        return amounts
+    }
+
+    private func memberRow(_ student: Student, amount: Double) -> some View {
         let on = attending.contains(student.uuid)
+        let hasPaid = paid.contains(student.uuid)
         return VStack(alignment: .leading, spacing: 8) {
             HStack {
                 Avatar(text: student.name, color: avatarColor(for: student.name, muted: !on), size: 32)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(student.name)
                         .font(.system(size: 16, weight: .semibold))
-                    Text(on ? CN.money(amount(for: student)) : "请假 · 不计费")
+                    Text(on ? CN.money(amount) : "请假 · 不计费")
                         .font(.system(size: 13))
                         .foregroundStyle(on ? Theme.secondary : Theme.orange)
                 }
@@ -109,15 +117,17 @@ struct GroupRollSheet: View {
             }
             if isReview && on {
                 Button {
-                    if paid.contains(student.uuid) {
+                    if hasPaid {
                         paid.remove(student.uuid)
                     } else {
                         paid.insert(student.uuid)
                     }
                 } label: {
-                    Pill(text: paid.contains(student.uuid) ? "已收" : "未收", color: paid.contains(student.uuid) ? Theme.green : Theme.red)
+                    Pill(text: hasPaid ? "已收" : "未收", color: hasPaid ? Theme.green : Theme.red)
+                        .frame(minWidth: 44, minHeight: 44)
+                        .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.borderless)
             }
         }
         .padding(.horizontal, 16)
@@ -135,7 +145,7 @@ struct GroupRollSheet: View {
         guard !ready else { return }
         ready = true
         if existing.isEmpty {
-            attending = Set(members.map(\.uuid))
+            attending = Set(group.activeStudents.map(\.uuid))
         } else {
             attending = Set(existing.filter { $0.status != .leave }.compactMap { $0.student?.uuid })
             paid = Set(existing.filter(\.paid).compactMap { $0.student?.uuid })
@@ -143,30 +153,20 @@ struct GroupRollSheet: View {
     }
 
     private func save() {
-        let key = slot.uuid.uuidString
-        var previous: [(lesson: Lesson, statusRaw: String, paid: Bool)] = []
-        for student in members {
-            if let lesson = student.lessons.first(where: {
-                CN.isSameDay($0.date, day)
-                    && $0.originKind == OriginKind.groupSlot
-                    && $0.originSlotKey == key
-            }) {
-                previous.append((lesson: lesson, statusRaw: lesson.statusRaw, paid: lesson.paid))
-            }
-        }
-        let created = LessonFactory.applyGroupRoll(
+        let applied = LessonFactory.applyGroupRoll(
             context: context,
             group: group,
             slot: slot,
             day: day,
             attending: attending,
-            paid: paid
+            paid: paid,
+            persists: false
         )
         onSaved(
             LessonTickUndo(
                 message: "已记录：\(group.name) \(CN.hm(slot.startMinutes)) 上完",
-                created: created,
-                previous: previous
+                created: applied.created,
+                previous: applied.previous
             )
         )
         dismiss()
