@@ -1,0 +1,83 @@
+name: iOS
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Simulator build and unsigned IPA
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: |
+          set -euo pipefail
+          if [ -d /Applications/Xcode_16.4.app ]; then
+            sudo xcode-select -s /Applications/Xcode_16.4.app
+          elif [ -d /Applications/Xcode_16.3.app ]; then
+            sudo xcode-select -s /Applications/Xcode_16.3.app
+          elif [ -d /Applications/Xcode.app ]; then
+            sudo xcode-select -s /Applications/Xcode.app
+          else
+            echo "No Xcode.app found" >&2
+            ls /Applications
+            exit 1
+          fi
+          xcodebuild -version
+          xcodebuild -showsdks | sed -n '1,80p'
+
+      - name: Build for iOS Simulator
+        run: |
+          set -euo pipefail
+          xcodebuild build \
+            -project Keshijizhang.xcodeproj \
+            -scheme Keshijizhang \
+            -destination 'generic/platform=iOS Simulator' \
+            -configuration Debug \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            COMPILER_INDEX_STORE_ENABLE=NO
+
+      - name: Build unsigned iOS app and pack IPA
+        run: |
+          set -euo pipefail
+          xcodebuild build \
+            -project Keshijizhang.xcodeproj \
+            -scheme Keshijizhang \
+            -sdk iphoneos \
+            -configuration Release \
+            -derivedDataPath "$PWD/build/DerivedData" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            AD_HOC_CODE_SIGNING_ALLOWED=YES \
+            DEVELOPMENT_TEAM="" \
+            PROVISIONING_PROFILE_SPECIFIER="" \
+            COMPILER_INDEX_STORE_ENABLE=NO
+          APP="$(find build/DerivedData -type d -name 'Keshijizhang.app' | head -n 1)"
+          test -n "$APP"
+          test -e "$APP/Info.plist"
+          /usr/libexec/PlistBuddy -c 'Print:CFBundleIdentifier' "$APP/Info.plist"
+          /usr/libexec/PlistBuddy -c 'Print:CFBundleDisplayName' "$APP/Info.plist"
+          rm -rf build/ipa
+          mkdir -p build/ipa/Payload
+          cp -R "$APP" build/ipa/Payload/
+          (cd build/ipa && zip -qry ../Keshijizhang-unsigned.ipa Payload)
+          test -f build/Keshijizhang-unsigned.ipa
+          SIZE="$(stat -f%z build/Keshijizhang-unsigned.ipa)"
+          echo "IPA bytes: $SIZE"
+          test "$SIZE" -gt 50000
+
+      - name: Upload unsigned IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: Keshijizhang-unsigned-ipa
+          path: build/Keshijizhang-unsigned.ipa
+          if-no-files-found: error
