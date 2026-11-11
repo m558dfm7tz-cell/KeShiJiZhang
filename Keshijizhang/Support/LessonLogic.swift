@@ -427,10 +427,12 @@ enum Persistence {
 }
 
 extension ModelContext {
+    @MainActor
     func saveSoon(after nanoseconds: UInt64 = 80_000_000) {
         Persistence.saveSoon(self, after: nanoseconds)
     }
 
+    @MainActor
     func saveNow() {
         Persistence.saveNow(self)
     }
