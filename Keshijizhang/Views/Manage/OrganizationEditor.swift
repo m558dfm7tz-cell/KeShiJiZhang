@@ -8,6 +8,8 @@ struct OrganizationEditorView: View {
 
     @State private var showAssign = false
     @State private var showNewStudent = false
+    @State private var showAssignGroup = false
+    @State private var showNewGroup = false
     @State private var confirmDelete = false
     @State private var settlementOptions = ["每月月底", "每月月初", "上完即结", "按学期结算", "其他"]
 
@@ -85,6 +87,79 @@ struct OrganizationEditorView: View {
                         .buttonStyle(.plain)
                     }
 
+                    SectionLabel(text: "小班")
+                    FormCard {
+                        let classes = org.sortedGroups
+                        if classes.isEmpty {
+                            Text("还没有小班")
+                                .foregroundStyle(Theme.secondary)
+                                .padding(.horizontal, 16)
+                                .frame(minHeight: 48)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            FormDivider()
+                        }
+                        ForEach(classes, id: \.uuid) { group in
+                            HStack(spacing: 8) {
+                                NavigationLink {
+                                    GroupEditorView(group: group)
+                                } label: {
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(group.name)
+                                            .foregroundStyle(.primary)
+                                        Text(groupLine(group))
+                                            .font(.system(size: 12))
+                                            .foregroundStyle(Theme.secondary)
+                                    }
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain)
+                                Button("移出") {
+                                    group.organization = nil
+                                    group.syncMembersOrganization()
+                                    context.saveSoon()
+                                }
+                                .font(.system(size: 14))
+                                .foregroundStyle(Theme.red)
+                                .frame(minHeight: 44)
+                            }
+                            .padding(.horizontal, 16)
+                            .frame(minHeight: 54)
+                            FormDivider()
+                        }
+                        Button { showAssignGroup = true } label: {
+                            HStack {
+                                Image(systemName: "plus")
+                                Text("添加已有小班")
+                            }
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundStyle(Theme.blue)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 16)
+                            .frame(minHeight: 50)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.borderless)
+                        FormDivider()
+                        Button { showNewGroup = true } label: {
+                            HStack {
+                                Image(systemName: "plus")
+                                Text("新建小班")
+                            }
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundStyle(Theme.blue)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 16)
+                            .frame(minHeight: 50)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.borderless)
+                    }
+                    Text("这里和小班资料里的「所属」是同一项。班归到这个机构后，班里有名字的学生也归这里。")
+                        .font(.system(size: 12))
+                        .foregroundStyle(Theme.secondary)
+                        .padding(.horizontal, 4)
+
                     Button { confirmDelete = true } label: {
                         Text("删除机构（学生和记录保留）")
                             .font(.system(size: 16, weight: .semibold))
@@ -114,6 +189,12 @@ struct OrganizationEditorView: View {
         .sheet(isPresented: $showNewStudent) {
             NewStudentSheet(presetOrganizationID: org.uuid)
         }
+        .sheet(isPresented: $showAssignGroup) {
+            AssignGroupOrganizationSheet(org: org)
+        }
+        .sheet(isPresented: $showNewGroup) {
+            NewOrgGroupSheet(org: org)
+        }
         .alert("删除机构？", isPresented: $confirmDelete) {
             Button("删除", role: .destructive) {
                 for student in Array(org.students) {
@@ -135,6 +216,13 @@ struct OrganizationEditorView: View {
             items.insert(org.settlement, at: 0)
         }
         return items
+    }
+
+    private func groupLine(_ group: SmallGroup) -> String {
+        let named = group.students.filter { !$0.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        let people = named.isEmpty ? "标准 \(group.standardCount) 人" : "\(named.count) 人"
+        if group.scheduleSummary.isEmpty { return people }
+        return "\(group.scheduleSummary) · \(people)"
     }
 
     private func studentPriceLine(_ student: Student) -> String {
@@ -282,5 +370,110 @@ struct AssignOrganizationSheet: View {
                 }
             }
         }
+    }
+}
+
+struct AssignGroupOrganizationSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.modelContext) private var context
+    @Query(sort: \SmallGroup.name) private var groups: [SmallGroup]
+    var org: Organization
+
+    private var candidates: [SmallGroup] {
+        groups.filter { $0.organization?.uuid != org.uuid }
+    }
+
+    var body: some View {
+        NavigationStack {
+            List {
+                if candidates.isEmpty {
+                    Text("其他小班都已经在这个机构里")
+                        .foregroundStyle(.secondary)
+                }
+                ForEach(candidates, id: \.uuid) { group in
+                    Button {
+                        group.organization = org
+                        group.syncMembersOrganization()
+                        context.saveSoon()
+                        dismiss()
+                    } label: {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(group.name)
+                                if let current = group.organization {
+                                    Text("当前在\(current.name)，点按会改到这里")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                } else {
+                                    Text("自己的")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                            Spacer()
+                        }
+                    }
+                    .foregroundStyle(.primary)
+                }
+            }
+            .navigationTitle("添加小班")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("关闭") { dismiss() }
+                }
+            }
+        }
+    }
+}
+
+struct NewOrgGroupSheet: View {
+    @Environment(\.modelContext) private var context
+    @Environment(\.dismiss) private var dismiss
+    var org: Organization
+    @State private var name = ""
+    @State private var warning = false
+
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                ScreenBackground()
+                VStack(alignment: .leading, spacing: 12) {
+                    FormCard {
+                        FieldRow(title: "小班名字", text: $name, placeholder: "例如周三数学班")
+                    }
+                    Text("建好后算在\(org.name)名下，可以再去小班资料里加时间和价格。")
+                        .font(.system(size: 13))
+                        .foregroundStyle(Theme.secondary)
+                        .padding(.horizontal, 4)
+                    Spacer()
+                }
+                .padding(16)
+            }
+            .navigationTitle("新建小班")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) { Button("保存") { save() } }
+            }
+            .keyboardDone()
+            .alert("请填写小班名字", isPresented: $warning) {
+                Button("好", role: .cancel) {}
+            }
+        }
+        .presentationDetents([.medium])
+    }
+
+    private func save() {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            warning = true
+            return
+        }
+        let group = SmallGroup(name: trimmed)
+        group.organization = org
+        context.insert(group)
+        context.saveSoon()
+        dismiss()
     }
 }

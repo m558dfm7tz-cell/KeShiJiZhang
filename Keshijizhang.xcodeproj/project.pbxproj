@@ -25,6 +25,7 @@
 		50B8CCBE4CE0600F5E439EAA /* MonthStatsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D780D3ADDA492EB329E5C7A7 /* MonthStatsView.swift */; };
 		4DD367E86B5798DDAC86DB43 /* StudentMonthDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B385BCFBAF249FE3D8A7C4B4 /* StudentMonthDetailView.swift */; };
 		AF07998C3D7767B4B30226E7 /* AddLessonSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 179B593716BF518062813D56 /* AddLessonSheet.swift */; };
+		C39E4A71B2D8056F4E1A90C2 /* AddGroupLessonSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4AF5B82C3E916704F2B01D3 /* AddGroupLessonSheet.swift */; };
 		0D24174BF92B378564761E6D /* GroupRollSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E429307D0690A1309E74410 /* GroupRollSheet.swift */; };
 		A17C0E5D9B2F4A61C8D03E45 /* GroupHeadcountSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = B28D1F6E0C3A5B72D9E14F56 /* GroupHeadcountSheet.swift */; };
 		E63EE5A71200476FF54A04E5 /* TodayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3642A51965BB2A3BCE67CD17 /* TodayView.swift */; };
@@ -52,6 +53,7 @@
 		D780D3ADDA492EB329E5C7A7 /* MonthStatsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MonthStatsView.swift; sourceTree = "<group>"; };
 		B385BCFBAF249FE3D8A7C4B4 /* StudentMonthDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudentMonthDetailView.swift; sourceTree = "<group>"; };
 		179B593716BF518062813D56 /* AddLessonSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddLessonSheet.swift; sourceTree = "<group>"; };
+		D4AF5B82C3E916704F2B01D3 /* AddGroupLessonSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddGroupLessonSheet.swift; sourceTree = "<group>"; };
 		4E429307D0690A1309E74410 /* GroupRollSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupRollSheet.swift; sourceTree = "<group>"; };
 		B28D1F6E0C3A5B72D9E14F56 /* GroupHeadcountSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupHeadcountSheet.swift; sourceTree = "<group>"; };
 		3642A51965BB2A3BCE67CD17 /* TodayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TodayView.swift; sourceTree = "<group>"; };
@@ -160,6 +162,7 @@
 			isa = PBXGroup;
 			children = (
 				179B593716BF518062813D56 /* AddLessonSheet.swift */,
+				D4AF5B82C3E916704F2B01D3 /* AddGroupLessonSheet.swift */,
 				B28D1F6E0C3A5B72D9E14F56 /* GroupHeadcountSheet.swift */,
 				4E429307D0690A1309E74410 /* GroupRollSheet.swift */,
 				3642A51965BB2A3BCE67CD17 /* TodayView.swift */,
@@ -271,6 +274,7 @@
 				50B8CCBE4CE0600F5E439EAA /* MonthStatsView.swift in Sources */,
 				4DD367E86B5798DDAC86DB43 /* StudentMonthDetailView.swift in Sources */,
 				AF07998C3D7767B4B30226E7 /* AddLessonSheet.swift in Sources */,
+				C39E4A71B2D8056F4E1A90C2 /* AddGroupLessonSheet.swift in Sources */,
 				0D24174BF92B378564761E6D /* GroupRollSheet.swift in Sources */,
 				A17C0E5D9B2F4A61C8D03E45 /* GroupHeadcountSheet.swift in Sources */,
 				E63EE5A71200476FF54A04E5 /* TodayView.swift in Sources */,

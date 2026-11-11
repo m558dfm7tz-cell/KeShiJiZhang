@@ -288,16 +288,18 @@ struct PaymentView: View {
         if lesson.isClassHeadcount {
             var parts = ["整班"]
             if lesson.hasTime { parts.append(CN.hm(lesson.timeMinutes)) }
+            if lesson.kind != .fixed { parts.append(lesson.kind.title) }
             parts.append(lesson.organization?.name ?? lesson.group?.organization?.name ?? "自己的")
             return parts.joined(separator: " ")
         }
         var parts: [String] = []
         if lesson.hasTime { parts.append(CN.hm(lesson.timeMinutes)) }
-        if lesson.originKind == OriginKind.groupSlot, !lesson.groupName.isEmpty {
+        if !lesson.groupName.isEmpty {
             parts.append(lesson.groupName)
-        } else if lesson.kind == .fixed {
+        }
+        if lesson.kind == .fixed && lesson.groupName.isEmpty {
             parts.append("一对一")
-        } else {
+        } else if lesson.kind != .fixed {
             parts.append(lesson.kind.title)
         }
         if lesson.priceOverridden { parts.append("改价") }

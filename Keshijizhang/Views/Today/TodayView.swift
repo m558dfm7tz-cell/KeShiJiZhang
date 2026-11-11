@@ -21,6 +21,7 @@ struct TodayView: View {
 
     @State private var query = ""
     @State private var addStudentID: UUID?
+    @State private var addGroupID: UUID?
     @State private var roll: RollRequest?
     @State private var headcount: HeadcountRequest?
     @State private var doneExpanded = false
@@ -80,6 +81,14 @@ struct TodayView: View {
         .sheet(isPresented: addSheetPresented) {
             if let student = student(addStudentID) {
                 AddLessonSheet(student: student)
+            }
+        }
+        .sheet(isPresented: addGroupPresented) {
+            if let group = groups.first(where: { $0.uuid == addGroupID }) {
+                AddGroupLessonSheet(group: group) { undo in
+                    showToast(undo)
+                    context.saveSoon()
+                }
             }
         }
         .sheet(item: $headcount) { request in
@@ -271,7 +280,9 @@ struct TodayView: View {
     private func foldSummary(done: [Lesson], leave: [Lesson]) -> String {
         let source = done.isEmpty ? leave : done
         let parts = source.prefix(3).map { lesson in
-            let name = lesson.student?.name ?? ""
+            let name = lesson.isClassHeadcount
+                ? (lesson.groupName.isEmpty ? "小班" : lesson.groupName)
+                : (lesson.student?.name ?? "")
             if lesson.hasTime { return "\(name) \(CN.hm(lesson.timeMinutes))" }
             return name
         }
@@ -286,27 +297,57 @@ struct TodayView: View {
         )
     }
 
+    private var addGroupPresented: Binding<Bool> {
+        Binding(
+            get: { addGroupID != nil },
+            set: { if !$0 { addGroupID = nil } }
+        )
+    }
+
+    private func matchingGroups() -> [SmallGroup] {
+        let trimmed = query.trimmingCharacters(in: .whitespaces)
+        let ordered = groups.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+        if trimmed.isEmpty { return ordered }
+        return ordered.filter { $0.name.localizedStandardContains(trimmed) }
+    }
+
     private func addSection(_ addStudents: [Student], counts: [UUID: Int]) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            SectionLabel(text: "加课 / 补记（点学生右边的 +）")
+        let matching = matchingGroups()
+        return VStack(alignment: .leading, spacing: 10) {
+            SectionLabel(text: "加课 / 补记（点右边的 +）")
             HStack(spacing: 8) {
                 Image(systemName: "magnifyingglass")
                     .foregroundStyle(Theme.secondary)
-                TextField("搜索学生", text: $query)
+                TextField("搜索学生或小班", text: $query)
             }
             .padding(.horizontal, 12)
             .frame(height: 40)
             .background(Color(red: 0.93, green: 0.93, blue: 0.95), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
 
-            if students.isEmpty {
+            if !matching.isEmpty {
+                SectionLabel(text: "小班")
+                FormCard {
+                    ForEach(Array(matching.enumerated()), id: \.element.uuid) { index, group in
+                        if index > 0 { FormDivider() }
+                        addGroupRow(group)
+                    }
+                }
+            }
+
+            if students.isEmpty && groups.isEmpty {
                 Card {
                     EmptyHint(title: "还没有学生", message: "到「管理」页点「添加学生」，记下姓名和每节单价。")
                 }
-            } else if addStudents.isEmpty {
+            } else if students.isEmpty {
+                EmptyView()
+            } else if addStudents.isEmpty && matching.isEmpty {
                 Card {
                     EmptyHint(title: "没有匹配的学生", message: "换个名字试试。停课的学生不会出现在这里。")
                 }
+            } else if addStudents.isEmpty {
+                EmptyView()
             } else {
+                SectionLabel(text: "学生")
                 FormCard {
                     ForEach(Array(addStudents.enumerated()), id: \.element.uuid) { index, student in
                         if index > 0 { FormDivider() }
@@ -316,6 +357,33 @@ struct TodayView: View {
             }
         }
         .padding(.top, 8)
+    }
+
+    private func addGroupRow(_ group: SmallGroup) -> some View {
+        let named = group.students.filter { !$0.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        let detail = named.isEmpty ? "标准 \(group.standardCount) 人 · \(CN.money(group.basePrice))" : "\(named.count) 人"
+        return HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(group.name)
+                    .font(.system(size: 17, weight: .semibold))
+                Text(detail)
+                    .font(.system(size: 13))
+                    .foregroundStyle(Theme.secondary)
+            }
+            Spacer()
+            Button {
+                addGroupID = group.uuid
+            } label: {
+                Image(systemName: "plus.circle")
+                    .font(.system(size: 26, weight: .regular))
+                    .foregroundStyle(Theme.blue)
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.borderless)
+        }
+        .padding(.horizontal, 16)
+        .frame(minHeight: 58)
     }
 
     private func addRow(_ student: Student, count: Int) -> some View {

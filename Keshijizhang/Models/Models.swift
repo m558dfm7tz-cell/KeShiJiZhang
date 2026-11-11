@@ -345,4 +345,8 @@ extension Organization {
     var sortedStudents: [Student] {
         students.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
     }
+
+    var sortedGroups: [SmallGroup] {
+        groups.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+    }
 }

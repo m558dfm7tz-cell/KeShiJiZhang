@@ -291,17 +291,43 @@ enum LessonFactory {
         context: ModelContext,
         persists: Bool = true
     ) -> Lesson {
+        return recordGroupHeadcount(
+            group: group,
+            on: day,
+            timeMinutes: slot.startMinutes,
+            count: count,
+            kind: .fixed,
+            slotKey: slot.uuid.uuidString,
+            context: context,
+            persists: persists
+        )
+    }
+
+    @discardableResult
+    static func recordGroupHeadcount(
+        group: SmallGroup,
+        on day: Date,
+        timeMinutes: Int,
+        count: Int,
+        amountOverride: Double? = nil,
+        kind: LessonKind = .fixed,
+        slotKey: String = "",
+        context: ModelContext,
+        persists: Bool = true
+    ) -> Lesson {
         let people = max(count, 1)
+        let computed = group.classCharge(for: people)
+        let amount = amountOverride ?? computed
         let lesson = Lesson()
         lesson.date = CN.startOfDay(day)
-        lesson.timeMinutes = slot.startMinutes
-        lesson.amount = group.classCharge(for: people)
-        lesson.priceOverridden = false
-        lesson.kind = .fixed
+        lesson.timeMinutes = timeMinutes
+        lesson.amount = round2(amount)
+        lesson.priceOverridden = abs(round2(amount) - computed) > 0.001
+        lesson.kind = kind
         lesson.status = .completed
         lesson.paid = false
         lesson.originKind = OriginKind.groupHeadcount
-        lesson.originSlotKey = slot.uuid.uuidString
+        lesson.originSlotKey = slotKey
         lesson.groupName = group.name
         lesson.headcount = people
         lesson.group = group
@@ -310,6 +336,46 @@ enum LessonFactory {
         context.insert(lesson)
         if persists { try? context.save() }
         return lesson
+    }
+
+    static func applyAdHocGroupRoll(
+        context: ModelContext,
+        group: SmallGroup,
+        day: Date,
+        timeMinutes: Int,
+        kind: LessonKind,
+        attending: Set<UUID>,
+        persists: Bool = true
+    ) -> GroupRollApply {
+        var created: [Lesson] = []
+        let members = group.activeStudents
+        let present = members.filter { attending.contains($0.uuid) }
+        let useClass = group.usesConfiguredClassPrice && !present.isEmpty
+        for student in members {
+            let isAttending = attending.contains(student.uuid)
+            let lesson = make(
+                context: context,
+                student: student,
+                date: day,
+                timeMinutes: timeMinutes,
+                amount: isAttending ? student.effectivePrice(on: day) : 0,
+                overridden: false,
+                kind: kind,
+                status: isAttending ? .completed : .leave,
+                originKind: OriginKind.manual,
+                groupName: group.name
+            )
+            if !isAttending {
+                lesson.paid = false
+            }
+            created.append(lesson)
+        }
+        if useClass {
+            let billable = created.filter { $0.status == .completed }
+            distributeClassCharge(group.classCharge(for: billable.count), across: billable)
+        }
+        if persists { try? context.save() }
+        return GroupRollApply(created: created, previous: [])
     }
 
     static func distributeClassCharge(_ total: Double, across lessons: [Lesson]) {
