@@ -9,6 +9,7 @@ struct GroupRollSheet: View {
     var slot: WeeklySlot
     var day: Date
     var existing: [Lesson]
+    var onSaved: (LessonTickUndo) -> Void = { _ in }
 
     @State private var attending: Set<UUID> = []
     @State private var paid: Set<UUID> = []
@@ -142,13 +143,31 @@ struct GroupRollSheet: View {
     }
 
     private func save() {
-        LessonFactory.applyGroupRoll(
+        let key = slot.uuid.uuidString
+        var previous: [(lesson: Lesson, statusRaw: String, paid: Bool)] = []
+        for student in members {
+            if let lesson = student.lessons.first(where: {
+                CN.isSameDay($0.date, day)
+                    && $0.originKind == OriginKind.groupSlot
+                    && $0.originSlotKey == key
+            }) {
+                previous.append((lesson: lesson, statusRaw: lesson.statusRaw, paid: lesson.paid))
+            }
+        }
+        let created = LessonFactory.applyGroupRoll(
             context: context,
             group: group,
             slot: slot,
             day: day,
             attending: attending,
             paid: paid
+        )
+        onSaved(
+            LessonTickUndo(
+                message: "已记录：\(group.name) \(CN.hm(slot.startMinutes)) 上完",
+                created: created,
+                previous: previous
+            )
         )
         dismiss()
     }

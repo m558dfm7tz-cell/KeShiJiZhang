@@ -54,7 +54,9 @@ enum Agenda {
         var grouped: [String: [Lesson]] = [:]
         for student in students {
             for lesson in student.lessons where CN.isSameDay(lesson.date, day) {
-                if lesson.originKind == OriginKind.groupSlot, !lesson.originSlotKey.isEmpty {
+                if lesson.originKind == OriginKind.groupSlot,
+                   !lesson.originSlotKey.isEmpty,
+                   lesson.status != .pending {
                     grouped[lesson.originSlotKey, default: []].append(lesson)
                 } else {
                     result.append(.single(lesson))
@@ -169,9 +171,10 @@ enum LessonFactory {
         return lesson
     }
 
-    static func completeStudentSlot(_ slot: WeeklySlot, student: Student, on day: Date, context: ModelContext) {
+    @discardableResult
+    static func completeStudentSlot(_ slot: WeeklySlot, student: Student, on day: Date, context: ModelContext) -> Lesson {
         let amount = student.effectivePrice(on: day)
-        make(
+        let lesson = make(
             context: context,
             student: student,
             date: day,
@@ -184,10 +187,12 @@ enum LessonFactory {
             originSlotKey: slot.uuid.uuidString
         )
         try? context.save()
+        return lesson
     }
 
-    static func leaveStudentSlot(_ slot: WeeklySlot, student: Student, on day: Date, context: ModelContext) {
-        make(
+    @discardableResult
+    static func leaveStudentSlot(_ slot: WeeklySlot, student: Student, on day: Date, context: ModelContext) -> Lesson {
+        let lesson = make(
             context: context,
             student: student,
             date: day,
@@ -200,6 +205,7 @@ enum LessonFactory {
             originSlotKey: slot.uuid.uuidString
         )
         try? context.save()
+        return lesson
     }
 
     static func undo(_ lesson: Lesson, context: ModelContext) {
@@ -247,6 +253,7 @@ enum LessonFactory {
         try? context.save()
     }
 
+    @discardableResult
     static func applyGroupRoll(
         context: ModelContext,
         group: SmallGroup,
@@ -254,7 +261,8 @@ enum LessonFactory {
         day: Date,
         attending: Set<UUID>,
         paid: Set<UUID>
-    ) {
+    ) -> [Lesson] {
+        var created: [Lesson] = []
         let members = group.activeStudents
         let key = slot.uuid.uuidString
         for student in members {
@@ -293,8 +301,9 @@ enum LessonFactory {
                     groupName: group.name
                 )
                 lesson.paid = paid.contains(student.uuid)
+                created.append(lesson)
             } else {
-                make(
+                let lesson = make(
                     context: context,
                     student: student,
                     date: day,
@@ -307,9 +316,11 @@ enum LessonFactory {
                     originSlotKey: key,
                     groupName: group.name
                 )
+                created.append(lesson)
             }
         }
         try? context.save()
+        return created
     }
 
     static func undoGroup(slotKey: String, lessons: [Lesson], context: ModelContext) {
@@ -318,4 +329,11 @@ enum LessonFactory {
         }
         try? context.save()
     }
+}
+
+struct LessonTickUndo: Identifiable {
+    var id = UUID()
+    var message: String
+    var created: [Lesson]
+    var previous: [(lesson: Lesson, statusRaw: String, paid: Bool)]
 }

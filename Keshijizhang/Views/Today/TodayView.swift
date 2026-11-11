@@ -16,17 +16,34 @@ struct TodayView: View {
     @State private var query = ""
     @State private var addStudentID: UUID?
     @State private var roll: RollRequest?
-    @State private var amountLessonID: UUID?
-    @State private var amountText = ""
+    @State private var doneExpanded = false
+    @State private var toast: LessonTickUndo?
+    @State private var editingLessonID: UUID?
 
     private var today: Date { CN.startOfDay(Date()) }
+
+    private var todayLessons: [Lesson] {
+        var seen = Set<UUID>()
+        var list: [Lesson] = []
+        for student in students {
+            for lesson in student.lessons where CN.isSameDay(lesson.date, today) {
+                if seen.insert(lesson.uuid).inserted {
+                    list.append(lesson)
+                }
+            }
+        }
+        return list.sorted { $0.timeMinutes < $1.timeMinutes }
+    }
+
+    private var doneLessons: [Lesson] { todayLessons.filter { $0.status == .completed } }
+    private var leaveLessons: [Lesson] { todayLessons.filter { $0.status == .leave } }
+    private var foldLessons: [Lesson] { doneLessons + leaveLessons }
 
     private var entries: [TodayEntry] {
         Agenda.entries(students: students, groups: groups, on: today)
     }
 
     private var pending: [TodayEntry] { entries.filter { !$0.isDone } }
-    private var done: [TodayEntry] { entries.filter(\.isDone) }
 
     private var addStudents: [Student] {
         let pool = students.filter { !$0.paused }
@@ -48,24 +65,18 @@ struct TodayView: View {
                 VStack(alignment: .leading, spacing: 14) {
                     PageHeader(
                         title: "今天",
-                        subtitle: "\(CN.fullDayTitle(today)) · \(entries.count) 节课"
+                        subtitle: "\(CN.fullDayTitle(today)) · 还剩 \(pending.count) 节"
                     )
-                    if pending.isEmpty && done.isEmpty {
+                    if pending.isEmpty && foldLessons.isEmpty {
                         Card {
                             EmptyHint(title: "今天没有固定课", message: "固定时间会按星期出现在这里。也可以在下面给学生加课或补记。")
                         }
                     }
-                    if !pending.isEmpty {
-                        SectionLabel(text: "待上课")
-                        ForEach(pending) { entry in
-                            entryCard(entry)
-                        }
+                    ForEach(pending) { entry in
+                        pendingCard(entry)
                     }
-                    if !done.isEmpty {
-                        SectionLabel(text: "已上完")
-                        ForEach(done) { entry in
-                            entryCard(entry)
-                        }
+                    if !foldLessons.isEmpty {
+                        completedFold
                     }
                     addSection
                 }
@@ -75,6 +86,7 @@ struct TodayView: View {
             }
             .scrollDismissesKeyboard(.interactively)
         }
+        .overlay(alignment: .bottom) { toastBar }
         .toolbar(.hidden, for: .navigationBar)
         .sheet(isPresented: addSheetPresented) {
             if let student = student(addStudentID) {
@@ -82,29 +94,136 @@ struct TodayView: View {
             }
         }
         .sheet(item: $roll) { request in
-            GroupRollSheet(group: request.group, slot: request.slot, day: today, existing: request.existing)
+            GroupRollSheet(group: request.group, slot: request.slot, day: today, existing: request.existing) { undo in
+                showToast(undo)
+            }
         }
-        .alert("修改这节金额", isPresented: amountAlertPresented) {
-            TextField("金额", text: $amountText)
-                .keyboardType(.decimalPad)
-            Button("保存") { saveAmount() }
-            Button("取消", role: .cancel) {}
-        } message: {
-            Text("只改这一节，不会影响单价。")
+        .sheet(isPresented: editingPresented) {
+            if let lesson = findLesson(editingLessonID) {
+                LessonEditSheet(lesson: lesson)
+            }
         }
+    }
+
+    private var editingPresented: Binding<Bool> {
+        Binding(
+            get: { editingLessonID != nil },
+            set: { if !$0 { editingLessonID = nil } }
+        )
+    }
+
+    @ViewBuilder
+    private var toastBar: some View {
+        if let toast {
+            HStack(spacing: 12) {
+                Text(toast.message)
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundStyle(.white)
+                    .lineLimit(1)
+                Spacer(minLength: 8)
+                Button("撤销") { undo(toast) }
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(.white)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            .background(Color.black.opacity(0.88), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .padding(.horizontal, 16)
+            .padding(.bottom, 8)
+            .task(id: toast.id) {
+                try? await Task.sleep(nanoseconds: 4_000_000_000)
+                if self.toast?.id == toast.id {
+                    self.toast = nil
+                }
+            }
+        }
+    }
+
+    private var completedFold: some View {
+        VStack(spacing: 8) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.2)) { doneExpanded.toggle() }
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundStyle(Theme.secondary)
+                    Text(foldTitle)
+                        .font(.system(size: 15, weight: .medium))
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+                    Text(foldSummary)
+                        .font(.system(size: 14))
+                        .foregroundStyle(Theme.secondary)
+                        .lineLimit(1)
+                    Spacer(minLength: 4)
+                    Text(doneExpanded ? "收起" : "展开")
+                        .font(.system(size: 15))
+                        .foregroundStyle(Theme.blue)
+                    Image(systemName: doneExpanded ? "chevron.down" : "chevron.right")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(Theme.blue)
+                }
+            }
+            .buttonStyle(.plain)
+            .padding(.horizontal, 14)
+            .frame(minHeight: 52)
+            .background(Theme.card, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+
+            if doneExpanded {
+                ForEach(foldLessons, id: \.uuid) { lesson in
+                    Button {
+                        editingLessonID = lesson.uuid
+                    } label: {
+                        LessonRecordRow(lesson: lesson, showsStudent: true)
+                    }
+                    .buttonStyle(.plain)
+                }
+                let people = distinctStudents(in: foldLessons)
+                ForEach(people, id: \.uuid) { person in
+                    NavigationLink {
+                        StudentRecordsView(student: person, backTitle: "今天")
+                    } label: {
+                        HStack {
+                            Text("\(person.name) 的上课记录")
+                                .font(.system(size: 15, weight: .semibold))
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 12, weight: .semibold))
+                        }
+                        .foregroundStyle(Theme.blue)
+                        .padding(.horizontal, 14)
+                        .frame(minHeight: 44)
+                        .background(Theme.card, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+    }
+
+    private var foldTitle: String {
+        if doneLessons.isEmpty {
+            return "今天请假 \(leaveLessons.count) 次"
+        }
+        return "今天已上完 \(doneLessons.count) 节"
+    }
+
+    private var foldSummary: String {
+        let source = doneLessons.isEmpty ? leaveLessons : doneLessons
+        let parts = source.prefix(3).map { lesson in
+            let name = lesson.student?.name ?? ""
+            if lesson.hasTime { return "\(name) \(CN.hm(lesson.timeMinutes))" }
+            return name
+        }
+        let suffix = source.count > 3 ? "等" : ""
+        return parts.joined(separator: "、") + suffix
     }
 
     private var addSheetPresented: Binding<Bool> {
         Binding(
             get: { addStudentID != nil },
             set: { if !$0 { addStudentID = nil } }
-        )
-    }
-
-    private var amountAlertPresented: Binding<Bool> {
-        Binding(
-            get: { amountLessonID != nil },
-            set: { if !$0 { amountLessonID = nil } }
         )
     }
 
@@ -129,8 +248,11 @@ struct TodayView: View {
                     EmptyHint(title: "没有匹配的学生", message: "换个名字试试。停课的学生不会出现在这里。")
                 }
             } else {
-                ForEach(addStudents, id: \.uuid) { student in
-                    addRow(student)
+                FormCard {
+                    ForEach(Array(addStudents.enumerated()), id: \.element.uuid) { index, student in
+                        if index > 0 { FormDivider() }
+                        addRow(student)
+                    }
                 }
             }
         }
@@ -140,204 +262,146 @@ struct TodayView: View {
     private func addRow(_ student: Student) -> some View {
         let count = student.engagements(on: today).count
         let busy = count > 0
-        return Card {
-            HStack(spacing: 12) {
-                Avatar(text: student.name, color: avatarColor(for: student.name, muted: busy))
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(student.name)
-                        .font(.system(size: 17, weight: .semibold))
-                        .foregroundStyle(busy ? Theme.secondary : Color.primary)
-                    Text(busy ? "今天已有 \(count) 节" : CN.money(student.currentPrice))
-                        .font(.system(size: 13))
-                        .foregroundStyle(Theme.secondary)
-                }
-                Spacer()
-                Button {
-                    addStudentID = student.uuid
-                } label: {
-                    Image(systemName: "plus.circle")
-                        .font(.system(size: 26, weight: .regular))
-                        .foregroundStyle(busy ? Color.gray.opacity(0.45) : Theme.blue)
-                }
-                .buttonStyle(.plain)
+        return HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(student.name)
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(busy ? Theme.secondary : Color.primary)
+                Text(busy ? "今天已有 \(count) 节" : CN.money(student.currentPrice))
+                    .font(.system(size: 13))
+                    .foregroundStyle(Theme.secondary)
             }
+            Spacer()
+            Button {
+                addStudentID = student.uuid
+            } label: {
+                Image(systemName: "plus.circle")
+                    .font(.system(size: 26, weight: .regular))
+                    .foregroundStyle(busy ? Color.gray.opacity(0.45) : Theme.blue)
+            }
+            .buttonStyle(.plain)
         }
+        .padding(.horizontal, 16)
+        .frame(minHeight: 58)
     }
 
     @ViewBuilder
-    private func entryCard(_ entry: TodayEntry) -> some View {
+    private func pendingCard(_ entry: TodayEntry) -> some View {
         switch entry {
         case .studentSlot(let slot, let student):
-            lessonCard(
-                time: CN.hm(slot.startMinutes),
-                title: student.name,
-                subtitle: "一对一 · \(CN.money(student.effectivePrice(on: today)))",
-                badges: [],
-                checked: false,
-                muted: false
+            tickCard(
+                title: "\(CN.hm(slot.startMinutes)) \(student.name)",
+                subtitle: CN.money(student.effectivePrice(on: today))
             ) {
-                LessonFactory.completeStudentSlot(slot, student: student, on: today, context: context)
+                let lesson = LessonFactory.completeStudentSlot(slot, student: student, on: today, context: context)
+                showToast(
+                    LessonTickUndo(
+                        message: taughtLine(student.name, minutes: lesson.timeMinutes),
+                        created: [lesson],
+                        previous: []
+                    )
+                )
             }
             .contextMenu {
                 Button("记为请假（不计费）") {
-                    LessonFactory.leaveStudentSlot(slot, student: student, on: today, context: context)
+                    let lesson = LessonFactory.leaveStudentSlot(slot, student: student, on: today, context: context)
+                    showToast(
+                        LessonTickUndo(
+                            message: "已记录：\(student.name) \(CN.hm(slot.startMinutes)) 请假",
+                            created: [lesson],
+                            previous: []
+                        )
+                    )
                 }
             }
         case .groupSlot(let slot, let group):
-            lessonCard(
-                time: CN.hm(slot.startMinutes),
-                title: group.name,
-                subtitle: groupSubtitle(group),
-                badges: [],
-                checked: false,
-                muted: false
-            ) {
-                roll = RollRequest(
-                    id: slot.uuid.uuidString,
-                    group: group,
-                    slot: slot,
-                    existing: []
-                )
+            tickCard(title: "\(CN.hm(slot.startMinutes)) \(group.name)", subtitle: groupSubtitle(group)) {
+                roll = RollRequest(id: slot.uuid.uuidString, group: group, slot: slot, existing: [])
             }
         case .single(let lesson):
-            singleCard(lesson)
-        case .groupSession(let key, let lessons, let name, let time):
-            groupDoneCard(key: key, lessons: lessons, name: name, time: time)
+            if lesson.status == .pending {
+                tickCard(
+                    title: "\(lesson.hasTime ? CN.hm(lesson.timeMinutes) : "未填时间") \(lesson.student?.name ?? "学生")",
+                    subtitle: CN.money(lesson.amount)
+                ) {
+                    let priorStatus = lesson.statusRaw
+                    let priorPaid = lesson.paid
+                    lesson.status = .completed
+                    try? context.save()
+                    showToast(
+                        LessonTickUndo(
+                            message: taughtLine(lesson.student?.name ?? "学生", minutes: lesson.timeMinutes),
+                            created: [],
+                            previous: [(lesson: lesson, statusRaw: priorStatus, paid: priorPaid)]
+                        )
+                    )
+                }
+            }
+        case .groupSession:
+            EmptyView()
         }
     }
 
-    private func singleCard(_ lesson: Lesson) -> some View {
-        let leave = lesson.status == .leave
-        let pending = lesson.status == .pending
-        var badges: [(String, Color)] = []
-        if lesson.kind == .extra { badges.append(("加课", Theme.orange)) }
-        if lesson.kind == .makeup { badges.append(("补课", Theme.blue)) }
-        if lesson.priceOverridden && lesson.countsTowardBill { badges.append(("改价", Theme.orange)) }
-        if lesson.countsTowardBill {
-            badges.append((lesson.paid ? "已收" : "未收", lesson.paid ? Theme.green : Theme.red))
-        }
-        let subtitle: String = {
-            if leave { return "请假 · 不计费" }
-            if pending { return "待打卡 · \(CN.money(lesson.amount))" }
-            let who = lesson.kind == .fixed ? "一对一" : lesson.kind.title
-            return "\(who) · \(CN.money(lesson.amount))"
-        }()
-        return lessonCard(
-            time: lesson.hasTime ? CN.hm(lesson.timeMinutes) : "未填时间",
-            title: lesson.student?.name ?? "学生",
-            subtitle: subtitle,
-            badges: badges,
-            checked: !pending,
-            muted: leave,
-            onBadge: { badge in
-                if badge == "已收" || badge == "未收" {
-                    LessonFactory.togglePaid(lesson, context: context)
-                }
-            }
-        ) {
-            if pending {
-                lesson.status = .completed
-                try? context.save()
-            } else {
-                LessonFactory.undo(lesson, context: context)
-            }
-        }
-        .contextMenu {
-            if lesson.countsTowardBill {
-                Button(lesson.paid ? "标为未收" : "标为已收") {
-                    LessonFactory.togglePaid(lesson, context: context)
-                }
-                Button("修改金额") {
-                    amountText = String(format: "%g", lesson.amount)
-                    amountLessonID = lesson.uuid
-                }
-                Button("改为请假") {
-                    LessonFactory.setLeave(lesson, context: context)
-                }
-            } else if leave {
-                Button("取消请假，记为已上") {
-                    LessonFactory.restoreCompleted(lesson, context: context)
-                }
-            }
-            Button("删除这节课", role: .destructive) {
-                LessonFactory.delete(lesson, context: context)
-            }
-        }
-    }
-
-    private func groupDoneCard(key: String, lessons: [Lesson], name: String, time: Int) -> some View {
-        let attended = lessons.filter { $0.status == .completed }
-        let leaves = lessons.filter { $0.status == .leave }
-        let unpaid = Billing.unpaid(attended)
-        var subtitle = "到场 \(attended.count) 人"
-        if !leaves.isEmpty { subtitle += " · 请假 \(leaves.count) 人" }
-        if attended.isEmpty {
-            subtitle = "全部请假 · 不计费"
-        } else {
-            subtitle += " · \(CN.money(Billing.receivable(attended)))"
-        }
-        var badges: [(String, Color)] = []
-        if !attended.isEmpty {
-            badges.append((unpaid > 0 ? "未收 \(CN.money(unpaid))" : "已收清", unpaid > 0 ? Theme.red : Theme.green))
-        }
-        return lessonCard(
-            time: time >= 0 ? CN.hm(time) : "小班",
-            title: name,
-            subtitle: subtitle,
-            badges: badges,
-            checked: true,
-            muted: attended.isEmpty,
-            onCard: {
-                guard let located = locate(slotKey: key) else { return }
-                roll = RollRequest(id: "edit-\(key)", group: located.0, slot: located.1, existing: lessons)
-            }
-        ) {
-            LessonFactory.undoGroup(slotKey: key, lessons: lessons, context: context)
-        }
-    }
-
-    private func lessonCard(
-        time: String,
-        title: String,
-        subtitle: String,
-        badges: [(String, Color)],
-        checked: Bool,
-        muted: Bool,
-        onBadge: ((String) -> Void)? = nil,
-        onCard: (() -> Void)? = nil,
-        onCheck: @escaping () -> Void
-    ) -> some View {
+    private func tickCard(title: String, subtitle: String, action: @escaping () -> Void) -> some View {
         Card {
             HStack(alignment: .center, spacing: 12) {
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack(spacing: 6) {
-                        Text("\(time) \(title)")
-                            .font(.system(size: 17, weight: .semibold))
-                            .foregroundStyle(muted ? Theme.secondary : Color.primary)
-                    }
-                    HStack(spacing: 6) {
-                        Text(subtitle)
-                            .font(.system(size: 13))
-                            .foregroundStyle(Theme.secondary)
-                        ForEach(Array(badges.enumerated()), id: \.offset) { _, badge in
-                            Button {
-                                onBadge?(badge.0)
-                            } label: {
-                                Pill(text: badge.0, color: badge.1)
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(title)
+                        .font(.system(size: 17, weight: .semibold))
+                    Text(subtitle)
+                        .font(.system(size: 14))
+                        .foregroundStyle(Theme.secondary)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .contentShape(Rectangle())
-                .onTapGesture { onCard?() }
-                Button(action: onCheck) {
-                    CheckCircle(checked: checked)
+                Spacer(minLength: 8)
+                Button(action: action) {
+                    CheckCircle(checked: false)
                 }
                 .buttonStyle(.plain)
             }
         }
+    }
+
+    private func taughtLine(_ name: String, minutes: Int) -> String {
+        if minutes >= 0 {
+            return "已记录：\(name) \(CN.hm(minutes)) 上完"
+        }
+        return "已记录：\(name) 上完"
+    }
+
+    private func showToast(_ undo: LessonTickUndo) {
+        toast = undo
+    }
+
+    private func undo(_ item: LessonTickUndo) {
+        for lesson in item.created {
+            context.delete(lesson)
+        }
+        for prior in item.previous {
+            prior.lesson.statusRaw = prior.statusRaw
+            prior.lesson.paid = prior.paid
+        }
+        try? context.save()
+        toast = nil
+    }
+
+    private func findLesson(_ id: UUID?) -> Lesson? {
+        guard let id else { return nil }
+        for student in students {
+            if let lesson = student.lessons.first(where: { $0.uuid == id }) {
+                return lesson
+            }
+        }
+        return nil
+    }
+
+    private func distinctStudents(in lessons: [Lesson]) -> [Student] {
+        var seen = Set<UUID>()
+        var people: [Student] = []
+        for lesson in lessons {
+            guard let student = lesson.student, seen.insert(student.uuid).inserted else { continue }
+            people.append(student)
+        }
+        return people
     }
 
     private func groupSubtitle(_ group: SmallGroup) -> String {
@@ -353,28 +417,4 @@ struct TodayView: View {
         return students.first { $0.uuid == id }
     }
 
-    private func lesson(_ id: UUID?) -> Lesson? {
-        guard let id else { return nil }
-        for student in students {
-            if let lesson = student.lessons.first(where: { $0.uuid == id }) {
-                return lesson
-            }
-        }
-        return nil
-    }
-
-    private func saveAmount() {
-        guard let lesson = lesson(amountLessonID), let amount = CN.parseMoney(amountText) else { return }
-        LessonFactory.updateAmount(lesson, amount: amount, context: context)
-        amountLessonID = nil
-    }
-
-    private func locate(slotKey: String) -> (SmallGroup, WeeklySlot)? {
-        for group in groups {
-            if let slot = group.slots.first(where: { $0.uuid.uuidString == slotKey }) {
-                return (group, slot)
-            }
-        }
-        return nil
-    }
 }

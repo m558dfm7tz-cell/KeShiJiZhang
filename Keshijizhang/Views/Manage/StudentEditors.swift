@@ -25,6 +25,28 @@ struct StudentEditorView: View {
             ScreenBackground()
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
+                    NavigationLink {
+                        StudentRecordsView(student: student, backTitle: "管理")
+                    } label: {
+                        HStack(spacing: 12) {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("上课记录")
+                                    .font(.system(size: 17, weight: .semibold))
+                                    .foregroundStyle(.primary)
+                                Text("查看和修改每一节课")
+                                    .font(.system(size: 13))
+                                    .foregroundStyle(Theme.secondary)
+                            }
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(Color.gray.opacity(0.35))
+                        }
+                        .padding(16)
+                        .background(Theme.card, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    }
+                    .buttonStyle(.plain)
+
                     SectionLabel(text: "基础信息")
                     FormCard {
                         FieldRow(title: "姓名", text: $student.name, placeholder: "学生姓名")
