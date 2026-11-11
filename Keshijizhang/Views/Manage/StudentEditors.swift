@@ -188,7 +188,10 @@ struct StudentEditorView: View {
         .confirmationDialog("所在小班", isPresented: $showGroup, titleVisibility: .visible) {
             Button("不在小班") { student.smallGroup = nil }
             ForEach(groups, id: \.uuid) { group in
-                Button(group.name) { student.smallGroup = group }
+                Button(group.name) {
+                    student.smallGroup = group
+                    student.organization = group.organization
+                }
             }
             Button("取消", role: .cancel) {}
         } message: {
@@ -378,11 +381,11 @@ struct NewStudentSheet: View {
         }
         let student = Student(name: trimmed, parentPhone: phone.trimmingCharacters(in: .whitespaces), note: note.trimmingCharacters(in: .whitespaces), paused: paused)
         context.insert(student)
-        if let orgID {
+        if let groupID, let chosen = groups.first(where: { $0.uuid == groupID }) {
+            student.smallGroup = chosen
+            student.organization = chosen.organization
+        } else if let orgID {
             student.organization = organizations.first { $0.uuid == orgID }
-        }
-        if let groupID {
-            student.smallGroup = groups.first { $0.uuid == groupID }
         }
         let record = PriceRecord(unitPrice: price, effectiveFrom: CN.startOfDay(Date()))
         record.student = student

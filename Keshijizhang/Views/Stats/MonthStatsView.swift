@@ -22,21 +22,25 @@ private struct OrgStat: Identifiable {
     var color: Color
     var mark: String
     var rows: [StudentStat]
+    var extraLessons: [Lesson] = []
     var isPersonal: Bool
     var organization: Organization?
 
-    var receivable: Double { Money.sum(rows.map(\.receivable)) }
-    var unpaid: Double { Money.sum(rows.map(\.unpaid)) }
-    var lessons: [Lesson] { rows.flatMap(\.lessons) }
+    var receivable: Double { Money.sum(rows.map(\.receivable) + [Billing.receivable(extraLessons)]) }
+    var unpaid: Double { Money.sum(rows.map(\.unpaid) + [Billing.unpaid(extraLessons)]) }
+    var lessons: [Lesson] { rows.flatMap(\.lessons) + extraLessons }
 }
 
 struct MonthStatsView: View {
     @Environment(\.modelContext) private var context
     @Query(sort: \Student.createdAt) private var students: [Student]
     @Query(sort: \Organization.createdAt) private var organizations: [Organization]
+    @Query(filter: #Predicate<Lesson> { $0.originKind == "groupHeadcount" }, sort: \Lesson.date)
+    private var classLessonSource: [Lesson]
 
     @State private var month = CN.startOfMonth(Date())
     @State private var mode: StatsMode = .student
+    @State private var editingLessonID: UUID?
 
     private var studentStats: [StudentStat] {
         students.map { student in
@@ -57,13 +61,25 @@ struct MonthStatsView: View {
         }
     }
 
-    private var allLessons: [Lesson] { studentStats.flatMap(\.lessons) }
+    private var classLessons: [Lesson] {
+        var seen = Set<UUID>()
+        return classLessonSource.filter { lesson in
+            lesson.countsTowardBill && CN.isSameMonth(lesson.date, month) && seen.insert(lesson.uuid).inserted
+        }
+        .sorted { lhs, rhs in
+            if !CN.isSameDay(lhs.date, rhs.date) { return lhs.date > rhs.date }
+            return lhs.timeMinutes > rhs.timeMinutes
+        }
+    }
+
+    private var allLessons: [Lesson] { studentStats.flatMap(\.lessons) + classLessons }
 
     private var orgStats: [OrgStat] {
         var result: [OrgStat] = []
         let named = organizations.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
         for org in named {
             let rows = studentStats.filter { $0.student.organization?.uuid == org.uuid }
+            let extra = classLessons.filter { ($0.organization?.uuid ?? $0.group?.organization?.uuid) == org.uuid }
             result.append(
                 OrgStat(
                     id: org.uuid.uuidString,
@@ -71,13 +87,15 @@ struct MonthStatsView: View {
                     color: Theme.purple,
                     mark: String(org.name.prefix(1)),
                     rows: rows,
+                    extraLessons: extra,
                     isPersonal: false,
                     organization: org
                 )
             )
         }
         let personal = studentStats.filter { $0.student.organization == nil }
-        if !personal.isEmpty || organizations.isEmpty {
+        let personalClass = classLessons.filter { ($0.organization?.uuid ?? $0.group?.organization?.uuid) == nil }
+        if !personal.isEmpty || !personalClass.isEmpty || organizations.isEmpty {
             result.append(
                 OrgStat(
                     id: "personal",
@@ -85,12 +103,13 @@ struct MonthStatsView: View {
                     color: Theme.blue,
                     mark: "私",
                     rows: personal,
+                    extraLessons: personalClass,
                     isPersonal: true,
                     organization: nil
                 )
             )
         }
-        return result.filter { !$0.rows.isEmpty || $0.organization != nil }
+        return result.filter { !$0.rows.isEmpty || !$0.extraLessons.isEmpty || $0.organization != nil }
     }
 
     var body: some View {
@@ -130,11 +149,23 @@ struct MonthStatsView: View {
         }
         .navigationTitle("月统计")
         .navigationBarTitleDisplayMode(.large)
+        .sheet(isPresented: editingPresented) {
+            if let lesson = classLessons.first(where: { $0.uuid == editingLessonID }) {
+                LessonEditSheet(lesson: lesson)
+            }
+        }
+    }
+
+    private var editingPresented: Binding<Bool> {
+        Binding(
+            get: { editingLessonID != nil },
+            set: { if !$0 { editingLessonID = nil } }
+        )
     }
 
     @ViewBuilder
     private var studentList: some View {
-        if studentStats.isEmpty {
+        if studentStats.isEmpty && classLessons.isEmpty {
             Card {
                 EmptyHint(title: "本月还没有已上完的课", message: "在「今天」打卡，或补记以前的课之后，这里会按学生汇总。")
             }
@@ -147,12 +178,20 @@ struct MonthStatsView: View {
                 }
                 .buttonStyle(.plain)
             }
+            ForEach(classLessons, id: \.uuid) { lesson in
+                Button {
+                    editingLessonID = lesson.uuid
+                } label: {
+                    classCard(lesson)
+                }
+                .buttonStyle(.borderless)
+            }
         }
     }
 
     @ViewBuilder
     private var orgList: some View {
-        let visible = orgStats.filter { !$0.rows.isEmpty }
+        let visible = orgStats.filter { !$0.rows.isEmpty || !$0.extraLessons.isEmpty }
         if visible.isEmpty {
             Card {
                 EmptyHint(title: "本月还没有已上完的课", message: "机构分组会在有上课记录后出现。没有机构的学生算在私教里。")
@@ -236,8 +275,29 @@ struct MonthStatsView: View {
                         }
                         .padding(.horizontal, 14)
                         .padding(.vertical, 8)
+                        .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
+                }
+                ForEach(stat.extraLessons, id: \.uuid) { lesson in
+                    Button {
+                        editingLessonID = lesson.uuid
+                    } label: {
+                        HStack {
+                            Text(lesson.classHeadline)
+                                .font(.system(size: 14))
+                                .foregroundStyle(.primary)
+                                .lineLimit(2)
+                            Spacer()
+                            Text(CN.money(lesson.amount))
+                                .font(.system(size: 15, weight: .semibold))
+                                .foregroundStyle(lesson.paid ? Theme.green : .primary)
+                        }
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 8)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.borderless)
                 }
 
                 if stat.unpaid > 0 {
@@ -254,6 +314,29 @@ struct MonthStatsView: View {
                     }
                     .buttonStyle(.plain)
                     .padding(14)
+                }
+            }
+        }
+    }
+
+    private func classCard(_ lesson: Lesson) -> some View {
+        Card {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(lesson.groupName.isEmpty ? (lesson.group?.name ?? "小班") : lesson.groupName)
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundStyle(.primary)
+                    Text("\(CN.listDay(lesson.date)) · \(lesson.headcount) 人 · \(CN.money(lesson.amount))")
+                        .font(.system(size: 13))
+                        .foregroundStyle(Theme.secondary)
+                }
+                Spacer()
+                VStack(alignment: .trailing, spacing: 4) {
+                    Text(CN.money(lesson.amount))
+                        .font(.system(size: 18, weight: .bold))
+                    Text(lesson.paid ? "已收清" : "未收 \(CN.money(lesson.amount))")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(lesson.paid ? Theme.green : Theme.red)
                 }
             }
         }

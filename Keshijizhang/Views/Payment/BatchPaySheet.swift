@@ -18,6 +18,8 @@ struct BatchPaySheet: View {
     @Environment(\.dismiss) private var dismiss
     @Query(sort: \Student.name) private var students: [Student]
     @Query(sort: \Organization.name) private var orgs: [Organization]
+    @Query(filter: #Predicate<Lesson> { $0.originKind == "groupHeadcount" }, sort: \Lesson.date)
+    private var classLessonSource: [Lesson]
 
     var month: Date
 
@@ -70,7 +72,29 @@ struct BatchPaySheet: View {
                 }
             }
         }
+        for lesson in classLessonSource where lesson.countsTowardBill && includesClass(lesson) {
+            let day = CN.startOfDay(lesson.date)
+            guard day >= start, day <= end, seen.insert(lesson.uuid).inserted else { continue }
+            list.append(lesson)
+        }
         return list
+    }
+
+    private func includesClass(_ lesson: Lesson) -> Bool {
+        let orgID = lesson.organization?.uuid ?? lesson.group?.organization?.uuid
+        switch mode {
+        case .student:
+            return false
+        case .org:
+            switch orgPick {
+            case .org(let id):
+                return orgID == id
+            case .personal:
+                return orgID == nil
+            case nil:
+                return false
+            }
+        }
     }
 
     var body: some View {

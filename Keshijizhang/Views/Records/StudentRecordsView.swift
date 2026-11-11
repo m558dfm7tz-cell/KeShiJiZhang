@@ -154,6 +154,10 @@ struct LessonRecordRow: View {
     }
 
     private var title: String {
+        if lesson.isClassHeadcount {
+            let name = lesson.groupName.isEmpty ? (lesson.group?.name ?? "小班") : lesson.groupName
+            return "\(CN.listDay(lesson.date)) \(name) · \(lesson.headcount) 人"
+        }
         let time = lesson.hasTime ? " \(CN.hm(lesson.timeMinutes))" : ""
         let who = showsStudent ? " \(lesson.student?.name ?? "")" : ""
         return CN.listDay(lesson.date) + time + who

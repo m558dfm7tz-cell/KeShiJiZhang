@@ -34,6 +34,8 @@ struct PaymentView: View {
     @Environment(\.modelContext) private var context
     @Query(sort: \Student.createdAt) private var students: [Student]
     @Query(sort: \Organization.createdAt) private var orgs: [Organization]
+    @Query(filter: #Predicate<Lesson> { $0.originKind == "groupHeadcount" }, sort: \Lesson.date)
+    private var classLessonSource: [Lesson]
 
     @State private var month = CN.startOfMonth(Date())
     @State private var chip = PayChip(id: "all", kind: .all, title: "全部")
@@ -66,7 +68,35 @@ struct PaymentView: View {
                 }
             }
         }
-        return list.sorted { lhs, rhs in
+        return list
+    }
+
+    private func classLessons(in month: Date, matching chip: PayChip) -> [Lesson] {
+        var seen = Set<UUID>()
+        return classLessonSource.filter { lesson in
+            lesson.countsTowardBill
+                && CN.isSameMonth(lesson.date, month)
+                && classMatches(lesson, chip: chip)
+                && seen.insert(lesson.uuid).inserted
+        }
+    }
+
+    private func classMatches(_ lesson: Lesson, chip: PayChip) -> Bool {
+        let orgID = lesson.organization?.uuid ?? lesson.group?.organization?.uuid
+        switch chip.kind {
+        case .all:
+            return true
+        case .org(let id):
+            return orgID == id
+        case .personal:
+            return orgID == nil
+        case .student:
+            return false
+        }
+    }
+
+    private func sortedLessons(_ list: [Lesson]) -> [Lesson] {
+        list.sorted { lhs, rhs in
             if !CN.isSameDay(lhs.date, rhs.date) { return lhs.date > rhs.date }
             return lhs.timeMinutes > rhs.timeMinutes
         }
@@ -82,7 +112,7 @@ struct PaymentView: View {
 
     var body: some View {
         let chips = makeChips()
-        let monthLessons = lessons(in: month, matching: chip)
+        let monthLessons = sortedLessons(lessons(in: month, matching: chip) + classLessons(in: month, matching: chip))
         let visibleLessons = filtered(monthLessons)
         let unpaidTotal = Billing.unpaid(monthLessons)
         let selectedLessons = monthLessons.filter { selection.contains($0.uuid) && !$0.paid }
@@ -232,7 +262,7 @@ struct PaymentView: View {
                 }
                 .buttonStyle(.borderless)
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("\(CN.listDay(lesson.date)) · \(lesson.student?.name ?? "")")
+                    Text(rowTitle(lesson))
                         .font(.system(size: 16, weight: .semibold))
                     Text(detail(lesson))
                         .font(.system(size: 13))
@@ -246,7 +276,21 @@ struct PaymentView: View {
         }
     }
 
+    private func rowTitle(_ lesson: Lesson) -> String {
+        if lesson.isClassHeadcount {
+            let name = lesson.groupName.isEmpty ? (lesson.group?.name ?? "小班") : lesson.groupName
+            return "\(CN.listDay(lesson.date)) · \(name) · \(lesson.headcount) 人"
+        }
+        return "\(CN.listDay(lesson.date)) · \(lesson.student?.name ?? "")"
+    }
+
     private func detail(_ lesson: Lesson) -> String {
+        if lesson.isClassHeadcount {
+            var parts = ["整班"]
+            if lesson.hasTime { parts.append(CN.hm(lesson.timeMinutes)) }
+            parts.append(lesson.organization?.name ?? lesson.group?.organization?.name ?? "自己的")
+            return parts.joined(separator: " ")
+        }
         var parts: [String] = []
         if lesson.hasTime { parts.append(CN.hm(lesson.timeMinutes)) }
         if lesson.originKind == OriginKind.groupSlot, !lesson.groupName.isEmpty {

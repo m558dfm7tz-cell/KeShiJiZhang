@@ -26,6 +26,7 @@ enum LessonStatus: String {
 enum OriginKind {
     static let studentSlot = "studentSlot"
     static let groupSlot = "groupSlot"
+    static let groupHeadcount = "groupHeadcount"
     static let manual = "manual"
 }
 
@@ -41,6 +42,12 @@ final class Organization {
 
     @Relationship(deleteRule: .nullify, inverse: \Student.organization)
     var students: [Student] = []
+
+    @Relationship(deleteRule: .nullify, inverse: \SmallGroup.organization)
+    var groups: [SmallGroup] = []
+
+    @Relationship(deleteRule: .nullify, inverse: \Lesson.organization)
+    var billedLessons: [Lesson] = []
 
     init(
         name: String,
@@ -64,12 +71,21 @@ final class SmallGroup {
     var uuid: UUID = UUID()
     var name: String = ""
     var createdAt: Date = Date()
+    var basePrice: Double = 0
+    var standardCount: Int = 0
+    var perPersonDelta: Double = 0
+    /// 已有小班默认仍按名字点名，避免升级后改掉原来的打卡方式。
+    var rollByName: Bool = true
+    var organization: Organization? = nil
 
     @Relationship(deleteRule: .nullify, inverse: \Student.smallGroup)
     var students: [Student] = []
 
     @Relationship(deleteRule: .cascade, inverse: \WeeklySlot.group)
     var slots: [WeeklySlot] = []
+
+    @Relationship(deleteRule: .nullify, inverse: \Lesson.group)
+    var classLessons: [Lesson] = []
 
     init(name: String) {
         self.uuid = UUID()
@@ -155,8 +171,11 @@ final class Lesson {
     var originKind: String = OriginKind.manual
     var originSlotKey: String = ""
     var groupName: String = ""
+    var headcount: Int = 0
     var createdAt: Date = Date()
     var student: Student? = nil
+    var group: SmallGroup? = nil
+    var organization: Organization? = nil
 
     init() {
         self.uuid = UUID()
@@ -176,6 +195,13 @@ final class Lesson {
     var hasTime: Bool { timeMinutes >= 0 }
 
     var countsTowardBill: Bool { status == .completed }
+
+    var isClassHeadcount: Bool { originKind == OriginKind.groupHeadcount }
+
+    var classHeadline: String {
+        let name = groupName.isEmpty ? (group?.name ?? "小班") : groupName
+        return "\(name) · \(max(headcount, 0)) 人 · \(CN.money(amount))"
+    }
 }
 
 struct Engagement {
@@ -291,6 +317,32 @@ extension SmallGroup {
         sortedSlots.map {
             "每\(CN.weekdayShort($0.weekday)) \(CN.hm($0.startMinutes))"
         }.joined(separator: "、")
+    }
+
+    /// 每人增减。填了就用填写值；没填时用基础价格 ÷ 标准人数。
+    var effectivePerPersonDelta: Double {
+        if perPersonDelta != 0 { return perPersonDelta }
+        guard standardCount > 0 else { return 0 }
+        return basePrice / Double(standardCount)
+    }
+
+    var usesConfiguredClassPrice: Bool {
+        basePrice != 0 || perPersonDelta != 0 || standardCount > 0
+    }
+
+    var usesNameRoll: Bool {
+        rollByName && !activeStudents.isEmpty
+    }
+
+    func classCharge(for count: Int) -> Double {
+        let raw = basePrice + Double(count - standardCount) * effectivePerPersonDelta
+        return max(0, round2(raw))
+    }
+
+    func syncMembersOrganization() {
+        for student in students where student.organization?.uuid != organization?.uuid {
+            student.organization = organization
+        }
     }
 }
 

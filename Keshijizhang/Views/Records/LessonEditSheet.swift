@@ -14,6 +14,8 @@ struct LessonEditSheet: View {
     @State private var status: LessonStatus
     @State private var kind: LessonKind
     @State private var paid: Bool
+    @State private var headcount: Int
+    @State private var priceEdited = false
     @State private var showDate = false
     @State private var showTime = false
     @State private var showPrice = false
@@ -29,6 +31,7 @@ struct LessonEditSheet: View {
         _status = State(initialValue: lesson.status)
         _kind = State(initialValue: lesson.kind)
         _paid = State(initialValue: lesson.paid)
+        _headcount = State(initialValue: max(lesson.headcount, lesson.isClassHeadcount ? 1 : 0))
     }
 
     var body: some View {
@@ -52,6 +55,10 @@ struct LessonEditSheet: View {
                                 ValueRow(title: "价格", value: priceLabel)
                             }
                             .buttonStyle(.plain)
+                            if lesson.isClassHeadcount {
+                                FormDivider()
+                                headcountRow
+                            }
                             FormDivider()
                             choiceRow(title: "状态") {
                                 statusChip("已上", on: status == .completed) { status = .completed }
@@ -126,6 +133,45 @@ struct LessonEditSheet: View {
             }
         }
         .presentationDragIndicator(.visible)
+    }
+
+    private var headcountRow: some View {
+        HStack {
+            Text("人数")
+            Spacer()
+            Button {
+                setHeadcount(headcount - 1)
+            } label: {
+                Image(systemName: "minus.circle.fill")
+                    .font(.system(size: 22))
+                    .foregroundStyle(Theme.blue)
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.borderless)
+            Text("\(headcount)")
+                .font(.system(size: 17, weight: .semibold))
+                .frame(minWidth: 28)
+            Button {
+                setHeadcount(headcount + 1)
+            } label: {
+                Image(systemName: "plus.circle.fill")
+                    .font(.system(size: 22))
+                    .foregroundStyle(Theme.blue)
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.borderless)
+        }
+        .padding(.horizontal, 16)
+        .frame(minHeight: 54)
+    }
+
+    private func setHeadcount(_ value: Int) {
+        let next = max(1, value)
+        headcount = next
+        guard !priceEdited, let group = lesson.group else { return }
+        priceText = Self.plain(group.classCharge(for: next))
     }
 
     private var priceLabel: String {
@@ -245,7 +291,10 @@ struct LessonEditSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("完成") { showPrice = false }
+                    Button("完成") {
+                        priceEdited = true
+                        showPrice = false
+                    }
                 }
             }
             .keyboardDone()
@@ -263,9 +312,15 @@ struct LessonEditSheet: View {
         lesson.date = CN.startOfDay(day)
         lesson.timeMinutes = hasTime ? CN.minutes(from: timeDate) : -1
         lesson.amount = amount
-        lesson.priceOverridden = abs(round2(amount) - round2(standard)) > 0.001
         lesson.kind = kind
         lesson.status = status
+        if lesson.isClassHeadcount {
+            lesson.headcount = max(headcount, 1)
+            let expected = lesson.group?.classCharge(for: lesson.headcount) ?? amount
+            lesson.priceOverridden = abs(round2(amount) - round2(expected)) > 0.001
+        } else {
+            lesson.priceOverridden = abs(round2(amount) - round2(standard)) > 0.001
+        }
         if status != .completed {
             lesson.paid = false
         } else {

@@ -118,6 +118,21 @@ enum Agenda {
             }
         }
 
+        var headcountSlotKeys: [UUID: Set<String>] = [:]
+        for group in groups {
+            let indexed = LessonDay.index(group.classLessons, on: day)
+            for lesson in indexed.lessons where lesson.isClassHeadcount && seenLessons.insert(lesson.uuid).inserted {
+                if lesson.status == .completed {
+                    done.append(lesson)
+                } else if lesson.status == .leave {
+                    leave.append(lesson)
+                }
+                if !lesson.originSlotKey.isEmpty {
+                    headcountSlotKeys[group.uuid, default: []].insert(lesson.originSlotKey)
+                }
+            }
+        }
+
         done.sort { $0.timeMinutes < $1.timeMinutes }
         leave.sort { $0.timeMinutes < $1.timeMinutes }
 
@@ -128,12 +143,13 @@ enum Agenda {
         }
 
         for group in groups {
-            guard !group.activeStudents.isEmpty else { continue }
             for slot in group.slots where slot.weekday == weekday {
                 let key = slot.uuid.uuidString
-                let exists = grouped[key] != nil || group.students.contains { student in
-                    groupKeysByStudent[student.uuid]?.contains(key) == true
-                }
+                let exists = grouped[key] != nil
+                    || headcountSlotKeys[group.uuid]?.contains(key) == true
+                    || group.students.contains { student in
+                        groupKeysByStudent[student.uuid]?.contains(key) == true
+                    }
                 if !exists {
                     entries.append(.groupSlot(slot, group))
                 }
@@ -264,6 +280,48 @@ enum LessonFactory {
         )
         if persists { try? context.save() }
         return lesson
+    }
+
+    @discardableResult
+    static func completeGroupHeadcount(
+        _ slot: WeeklySlot,
+        group: SmallGroup,
+        on day: Date,
+        count: Int,
+        context: ModelContext,
+        persists: Bool = true
+    ) -> Lesson {
+        let people = max(count, 0)
+        let lesson = Lesson()
+        lesson.date = CN.startOfDay(day)
+        lesson.timeMinutes = slot.startMinutes
+        lesson.amount = group.classCharge(for: people)
+        lesson.priceOverridden = false
+        lesson.kind = .fixed
+        lesson.status = .completed
+        lesson.paid = false
+        lesson.originKind = OriginKind.groupHeadcount
+        lesson.originSlotKey = slot.uuid.uuidString
+        lesson.groupName = group.name
+        lesson.headcount = people
+        lesson.group = group
+        lesson.organization = group.organization
+        lesson.student = nil
+        context.insert(lesson)
+        if persists { try? context.save() }
+        return lesson
+    }
+
+    static func distributeClassCharge(_ total: Double, across lessons: [Lesson]) {
+        let billable = lessons.filter { $0.status == .completed }
+        guard !billable.isEmpty else { return }
+        let cents = Money.cents(total)
+        let base = cents / billable.count
+        let extra = cents % billable.count
+        for (index, lesson) in billable.enumerated() {
+            lesson.amount = Money.yuan(base + (index < extra ? 1 : 0))
+            lesson.priceOverridden = true
+        }
     }
 
     static func undo(_ lesson: Lesson, context: ModelContext) {

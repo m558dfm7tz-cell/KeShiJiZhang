@@ -20,8 +20,9 @@ struct GroupRollSheet: View {
     var body: some View {
         let members = group.activeStudents
         let amounts = amountsByStudent(members)
-        let total = Money.sum(members.compactMap { attending.contains($0.uuid) ? amounts[$0.uuid] : nil })
-        let title = buttonTitle(count: attending.count, total: total)
+        let present = attending.count
+        let absent = max(members.count - present, 0)
+        let total = rollTotal(present: present, members: members, amounts: amounts)
         return NavigationStack {
             ZStack {
                 ScreenBackground()
@@ -52,8 +53,43 @@ struct GroupRollSheet: View {
                     .padding(16)
                 }
                 .safeAreaInset(edge: .bottom) {
-                    VStack {
-                        FillButton(title: title, color: Theme.blue, disabled: members.isEmpty, action: save)
+                    VStack(spacing: 8) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("\(present) 人上课 · \(absent) 人请假")
+                                .font(.system(size: 15, weight: .medium))
+                            Text("应收 \(CN.money(total))")
+                                .font(.system(size: 22, weight: .bold))
+                                .foregroundStyle(present == 0 ? Theme.secondary : Theme.red)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        HStack(spacing: 8) {
+                            Button {
+                                attending = Set(members.map(\.uuid))
+                            } label: {
+                                Text("全到")
+                                    .font(.system(size: 17, weight: .semibold))
+                                    .foregroundStyle(Theme.blue)
+                                    .frame(maxWidth: .infinity)
+                                    .frame(height: 50)
+                                    .background(Theme.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                                    .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.borderless)
+                            .disabled(members.isEmpty)
+                            Button {
+                                save()
+                            } label: {
+                                Text("确认")
+                                    .font(.system(size: 17, weight: .semibold))
+                                    .foregroundStyle(.white)
+                                    .frame(maxWidth: .infinity)
+                                    .frame(height: 50)
+                                    .background(members.isEmpty ? Color.gray.opacity(0.35) : Theme.blue, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                                    .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.borderless)
+                            .disabled(members.isEmpty)
+                        }
                     }
                     .padding(.horizontal, 16)
                     .padding(.vertical, 8)
@@ -72,10 +108,12 @@ struct GroupRollSheet: View {
         .presentationDragIndicator(.visible)
     }
 
-    private func buttonTitle(count: Int, total: Double) -> String {
-        if count == 0 { return "全部记为请假" }
-        let verb = isReview ? "保存" : "确认上完"
-        return "\(verb) · \(count) 人 · \(CN.money(total))"
+    private func rollTotal(present: Int, members: [Student], amounts: [UUID: Double]) -> Double {
+        if group.usesConfiguredClassPrice {
+            guard present > 0 else { return 0 }
+            return group.classCharge(for: present)
+        }
+        return Money.sum(members.compactMap { attending.contains($0.uuid) ? amounts[$0.uuid] : nil })
     }
 
     private func amountsByStudent(_ members: [Student]) -> [UUID: Double] {
@@ -96,7 +134,7 @@ struct GroupRollSheet: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(student.name)
                         .font(.system(size: 16, weight: .semibold))
-                    Text(on ? CN.money(amount) : "请假 · 不计费")
+                    Text(on ? (group.usesConfiguredClassPrice ? "上课" : CN.money(amount)) : "请假 · 不计费")
                         .font(.system(size: 13))
                         .foregroundStyle(on ? Theme.secondary : Theme.orange)
                 }
@@ -162,6 +200,14 @@ struct GroupRollSheet: View {
             paid: paid,
             persists: false
         )
+        if group.usesConfiguredClassPrice {
+            var billable: [Lesson] = applied.created.filter { $0.status == .completed }
+            for prior in applied.previous where prior.lesson.status == .completed {
+                billable.append(prior.lesson)
+            }
+            billable.sort { ($0.student?.name ?? "") < ($1.student?.name ?? "") }
+            LessonFactory.distributeClassCharge(group.classCharge(for: attending.count), across: billable)
+        }
         onSaved(
             LessonTickUndo(
                 message: "已记录：\(group.name) \(CN.hm(slot.startMinutes)) 上完",

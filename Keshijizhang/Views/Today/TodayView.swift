@@ -8,6 +8,12 @@ private struct RollRequest: Identifiable {
     var existing: [Lesson]
 }
 
+private struct HeadcountRequest: Identifiable {
+    var id: String
+    var group: SmallGroup
+    var slot: WeeklySlot
+}
+
 struct TodayView: View {
     @Environment(\.modelContext) private var context
     @Query(sort: \Student.createdAt) private var students: [Student]
@@ -16,6 +22,7 @@ struct TodayView: View {
     @State private var query = ""
     @State private var addStudentID: UUID?
     @State private var roll: RollRequest?
+    @State private var headcount: HeadcountRequest?
     @State private var doneExpanded = false
     @State private var toast: LessonTickUndo?
     @State private var editingLessonID: UUID?
@@ -73,6 +80,24 @@ struct TodayView: View {
         .sheet(isPresented: addSheetPresented) {
             if let student = student(addStudentID) {
                 AddLessonSheet(student: student)
+            }
+        }
+        .sheet(item: $headcount) { request in
+            GroupHeadcountSheet(group: request.group, slot: request.slot, day: day) { lesson in
+                let mark = key(request.id, day: day)
+                withAnimation(.easeInOut(duration: 0.28)) {
+                    hiding.insert(mark)
+                }
+                showToast(
+                    LessonTickUndo(
+                        message: "已记录：\(lesson.groupName) \(lesson.headcount) 人上完",
+                        created: [lesson],
+                        previous: [],
+                        entryIDs: [mark]
+                    )
+                )
+                context.saveSoon()
+                scheduleHideClear(mark, after: 320_000_000)
             }
         }
         .sheet(item: $roll) { request in
@@ -352,7 +377,11 @@ struct TodayView: View {
                 checked: false,
                 showsLeaveMenu: false,
                 onTick: {
-                    roll = RollRequest(id: entry.id, group: group, slot: slot, existing: [])
+                    if group.usesNameRoll {
+                        roll = RollRequest(id: entry.id, group: group, slot: slot, existing: [])
+                    } else {
+                        headcount = HeadcountRequest(id: entry.id, group: group, slot: slot)
+                    }
                 },
                 onLeave: nil
             )
@@ -501,6 +530,11 @@ struct TodayView: View {
                 return lesson
             }
         }
+        for group in groups {
+            if let lesson = group.classLessons.first(where: { $0.uuid == id }) {
+                return lesson
+            }
+        }
         return nil
     }
 
@@ -515,11 +549,12 @@ struct TodayView: View {
     }
 
     private func groupSubtitle(_ group: SmallGroup) -> String {
-        let names = group.activeStudents.map(\.name)
-        let shown = names.prefix(4).joined(separator: "、")
-        let suffix = names.count > 4 ? "等 \(names.count) 人" : ""
-        if names.isEmpty { return "小班" }
-        return "小班 \(names.count) 人 · \(shown)\(suffix)"
+        let who = group.organization?.name ?? "小班"
+        let price = CN.money(group.basePrice)
+        if group.standardCount > 0 {
+            return "\(who) · 标准 \(group.standardCount) 人 · \(price)"
+        }
+        return "\(who) · \(price)"
     }
 
     private func student(_ id: UUID?) -> Student? {
